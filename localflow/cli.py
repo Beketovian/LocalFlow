@@ -87,18 +87,30 @@ def cmd_listen(args) -> int:
 
 def cmd_run(args) -> int:
     from .app import FlowController
-    from .audio import MicrophoneRecorder
+    from .audio import MicrophoneRecorder, rms
     from .dashboard import DashboardServer
     from .hotkeys import HotkeyListener
     from .injector import create_injector
+    from .overlay import RecordingOverlay
 
     config = _load_config(args)
+
+    # The floating recording pill (Wispr Flow's on-screen widget). Feeds on
+    # live mic levels; silently unavailable on headless systems.
+    overlay = RecordingOverlay()
+    overlay_ok = overlay.start()
+
+    def on_chunk(chunk) -> None:
+        if overlay_ok:
+            overlay.set_level(min(1.0, rms(chunk) * 12.0))
+
     controller = FlowController(
         config=config,
         recorder=MicrophoneRecorder(
             sample_rate=config.audio.sample_rate,
             device=config.audio.input_device,
             max_seconds=config.audio.max_recording_seconds,
+            on_chunk=on_chunk,
         ),
         injector=create_injector(
             config.output.method,
@@ -106,6 +118,17 @@ def cmd_run(args) -> int:
             config.output.restore_clipboard,
         ),
     )
+
+    if overlay_ok:
+        def on_status(status: str) -> None:
+            if status == "recording":
+                overlay.show("recording")
+            elif status == "transcribing":
+                overlay.show("processing")
+            else:
+                overlay.hide()
+
+        controller.on_status(on_status)
     print(f"LocalFlow {__version__} - local voice dictation")
     print(f"  engine: {config.engine.backend} / {config.engine.model}"
           f" (language: {config.engine.language})")
@@ -198,6 +221,35 @@ def cmd_run(args) -> int:
             dashboard.stop()
         if tray:
             tray.stop()
+        if overlay_ok:
+            overlay.stop()
+        controller.close()
+    return 0
+
+
+def cmd_ui(args) -> int:
+    """Open the dashboard app on its own (no hotkeys/microphone)."""
+    import webbrowser
+
+    from .app import FlowController
+    from .dashboard import DashboardServer
+    from .injector import CallbackInjector
+
+    config = _load_config(args)
+    controller = FlowController(config=config, injector=CallbackInjector())
+    server = DashboardServer(controller, config.dashboard.host, config.dashboard.port)
+    port = server.start()
+    url = f"http://{config.dashboard.host}:{port}"
+    print(f"LocalFlow dashboard: {url}  (Ctrl+C to quit)")
+    if not getattr(args, "no_browser", False):
+        webbrowser.open(url)
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.stop()
         controller.close()
     return 0
 
@@ -365,6 +417,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("listen", help="one hands-free dictation, print the text")
     p.set_defaults(func=cmd_listen)
+
+    p = sub.add_parser("ui", help="open the dashboard app (no dictation daemon)")
+    p.add_argument("--no-browser", action="store_true")
+    p.set_defaults(func=cmd_ui)
 
     p = sub.add_parser("setup", help="download a model and write default config")
     p.add_argument("--model", default=None, help="tiny, base, small, medium, large-v3 ...")

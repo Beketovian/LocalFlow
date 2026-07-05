@@ -83,6 +83,7 @@ class FlowController:
         self.state = ControllerState()
         self.listeners: List[Callable[[DictationEvent], None]] = []
         self.partial_listeners: List[Callable[[str], None]] = []
+        self.status_listeners: List[Callable[[str], None]] = []
         self._lock = threading.RLock()
         self._record_started_at = 0.0
         self._active_window = WindowInfo()
@@ -103,13 +104,25 @@ class FlowController:
     def on_partial(self, listener: Callable[[str], None]) -> None:
         self.partial_listeners.append(listener)
 
+    def on_status(self, listener: Callable[[str], None]) -> None:
+        """Subscribe to status changes: idle | recording | transcribing."""
+        self.status_listeners.append(listener)
+
+    def _set_status(self, status: str) -> None:
+        self.state.status = status
+        for listener in self.status_listeners:
+            try:
+                listener(status)
+            except Exception:
+                pass
+
     # ------------------------------------------------------------ dictation
 
     def start_recording(self, mode: str = "dictation") -> bool:
         with self._lock:
             if self.state.status != "idle":
                 return False
-            self.state.status = "recording"
+            self._set_status("recording")
             self.state.mode = mode
         # capture the focused window *before* the user switches attention
         self._active_window = self.window_provider.get()
@@ -122,21 +135,21 @@ class FlowController:
         with self._lock:
             if self.state.status != "recording":
                 return None
-            self.state.status = "transcribing"
+            self._set_status("transcribing")
         self.sounds.stop()
         audio = self.recorder.stop()
         try:
             event = self._process_audio(audio, mode=self.state.mode)
         finally:
             with self._lock:
-                self.state.status = "idle"
+                self._set_status("idle")
         return event
 
     def cancel_recording(self) -> None:
         with self._lock:
             if self.state.status != "recording":
                 return
-            self.state.status = "idle"
+            self._set_status("idle")
         self.recorder.stop()
 
     def dictate_array(self, audio: np.ndarray, mode: str = "dictation") -> DictationEvent:

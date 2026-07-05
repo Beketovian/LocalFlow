@@ -1,8 +1,9 @@
-"""Local web dashboard - history, stats, dictionary and settings.
+"""Local web dashboard - the Wispr Flow-style app window.
 
 Stdlib-only (http.server) so it runs anywhere, bound to localhost by default.
-This mirrors Wispr Flow's dashboard: totals, streak, WPM, searchable history,
-and editing of the personal dictionary and text replacements.
+Serves the single-page UI from localflow/static/index.html: home with streak /
+words / WPM / time-saved cards and recent activity, searchable history, the
+personal dictionary, and live-saving settings.
 """
 
 from __future__ import annotations
@@ -11,10 +12,21 @@ import dataclasses
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
 from .app import FlowController
+
+_STATIC_DIR = Path(__file__).parent / "static"
+
+
+def _load_page() -> str:
+    index = _STATIC_DIR / "index.html"
+    try:
+        return index.read_text(encoding="utf-8")
+    except OSError:
+        return _PAGE  # fallback: minimal built-in page
 
 _PAGE = """<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>LocalFlow</title>
@@ -123,7 +135,9 @@ class DashboardServer:
             def do_GET(self) -> None:  # noqa: N802
                 url = urlparse(self.path)
                 if url.path in ("/", "/index.html"):
-                    self._send(_PAGE.encode(), ctype="text/html; charset=utf-8")
+                    self._send(_load_page().encode(), ctype="text/html; charset=utf-8")
+                elif url.path == "/api/settings":
+                    self._send(controller.config.to_dict())
                 elif url.path == "/api/stats":
                     self._send(dataclasses.asdict(controller.history.stats()))
                 elif url.path == "/api/history":
@@ -174,6 +188,10 @@ class DashboardServer:
                     controller.config.replacements = controller.dictionary.replacements
                     controller.config.save()
                     self._send({"ok": True})
+                elif url.path == "/api/settings":
+                    self._apply_settings_patch(data)
+                    controller.config.save()
+                    self._send(controller.config.to_dict())
                 elif url.path == "/api/history/delete":
                     if data.get("all"):
                         controller.history.clear()
@@ -182,6 +200,28 @@ class DashboardServer:
                     self._send({"ok": True})
                 else:
                     self._send({"error": "not found"}, status=404)
+
+            def _apply_settings_patch(self, patch: dict) -> None:
+                """Apply a partial config update: {"formatting": {"x": true}, ...}.
+
+                Only keys that already exist on the config dataclasses are
+                accepted; value types must match the current value's type.
+                """
+                cfg = controller.config
+                for key, value in patch.items():
+                    if key == "user_name" and isinstance(value, str):
+                        cfg.user_name = value
+                    elif isinstance(value, dict) and hasattr(cfg, key):
+                        section = getattr(cfg, key)
+                        if not dataclasses.is_dataclass(section):
+                            continue
+                        for sub_key, sub_value in value.items():
+                            if not hasattr(section, sub_key):
+                                continue
+                            current = getattr(section, sub_key)
+                            if current is None or isinstance(sub_value, type(current)) \
+                                    or (isinstance(current, float) and isinstance(sub_value, (int, float))):
+                                setattr(section, sub_key, sub_value)
 
         self._httpd = ThreadingHTTPServer((self.host, self.port), Handler)
         self.port = self._httpd.server_address[1]  # resolves port 0

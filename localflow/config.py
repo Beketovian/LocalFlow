@@ -185,6 +185,8 @@ class Config:
     # Store history in SQLite (set False for fully ephemeral use)
     save_history: bool = True
     data_dir: Optional[str] = None
+    # Shown in the dashboard greeting ("Good morning, ...")
+    user_name: str = ""
 
     # ------------------------------------------------------------------ io
 
@@ -219,7 +221,7 @@ class Config:
                     if hasattr(prof, key):
                         setattr(prof, key, value)
                 cfg.profiles.append(prof)
-        for key in ("dictionary", "replacements", "save_history", "data_dir"):
+        for key in ("dictionary", "replacements", "save_history", "data_dir", "user_name"):
             if key in data:
                 setattr(cfg, key, data[key])
         return cfg

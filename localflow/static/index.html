@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LocalFlow</title>
+<style>
+:root {
+  --bg: #F6F2E9;          /* warm cream */
+  --panel: #FFFFFF;
+  --ink: #1D1C19;
+  --ink-2: #6F6B60;
+  --line: #E8E2D4;
+  --accent: #FF6A3D;      /* coral */
+  --accent-soft: #FFEDE5;
+  --green: #2E7D5B;
+  --radius: 16px;
+  --shadow: 0 1px 2px rgba(29,28,25,.04), 0 8px 24px rgba(29,28,25,.05);
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+  display: flex;
+}
+.serif { font-family: Georgia, "Times New Roman", serif; font-style: italic; }
+
+/* ---------------------------------------------------------------- sidebar */
+aside {
+  width: 232px; flex: 0 0 auto; padding: 22px 14px;
+  display: flex; flex-direction: column; gap: 4px;
+  border-right: 1px solid var(--line);
+}
+.logo { display: flex; align-items: baseline; gap: 2px; padding: 2px 12px 18px; }
+.logo .serif { font-size: 26px; font-weight: 600; letter-spacing: -.5px; }
+.logo .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+nav a {
+  display: flex; align-items: center; gap: 11px;
+  padding: 9px 12px; border-radius: 10px;
+  color: var(--ink-2); text-decoration: none; font-weight: 500;
+}
+nav a svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+nav a.active { background: var(--panel); color: var(--ink); box-shadow: var(--shadow); }
+nav a:hover:not(.active) { color: var(--ink); }
+.side-foot { margin-top: auto; padding: 12px; color: var(--ink-2); font-size: 12.5px; }
+.side-foot .pillhint {
+  background: #16161A; color: #fff; border-radius: 999px;
+  padding: 7px 13px; font-size: 12px; display: inline-flex; align-items: center; gap: 8px;
+  margin-bottom: 10px;
+}
+.pillhint .rec { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: blink 1.6s infinite; }
+@keyframes blink { 50% { opacity: .35; } }
+kbd {
+  background: #FBF8F1; border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 6px; padding: 1px 7px; font: 12px/1.6 inherit; color: var(--ink);
+}
+
+/* ------------------------------------------------------------------ main */
+main { flex: 1; overflow-y: auto; padding: 34px 44px 60px; }
+.page { max-width: 860px; margin: 0 auto; display: none; }
+.page.visible { display: block; }
+h1 { font-size: 27px; letter-spacing: -.4px; font-weight: 650; }
+h1 .serif { font-weight: 500; }
+.sub { color: var(--ink-2); margin: 4px 0 26px; }
+h2 { font-size: 15px; font-weight: 600; margin: 26px 0 10px; }
+
+.cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.stat {
+  background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 16px 18px 14px;
+}
+.stat .num { font-size: 26px; font-weight: 650; letter-spacing: -.5px; }
+.stat .num small { font-size: 14px; font-weight: 500; color: var(--ink-2); margin-left: 2px; }
+.stat .lbl { color: var(--ink-2); font-size: 12.5px; margin-top: 2px; display: flex; align-items: center; gap: 6px; }
+.flame { color: var(--accent); }
+
+.card {
+  background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 6px 0; overflow: hidden;
+}
+.item { display: flex; gap: 14px; padding: 13px 20px; border-top: 1px solid #F3EFE5; align-items: flex-start; }
+.item:first-child { border-top: 0; }
+.item .txt { flex: 1; white-space: pre-wrap; }
+.item .meta { color: var(--ink-2); font-size: 12px; white-space: nowrap; text-align: right; }
+.item .meta .app { color: var(--accent); font-weight: 550; }
+.item button.x { visibility: hidden; }
+.item:hover button.x { visibility: visible; }
+.empty { color: var(--ink-2); text-align: center; padding: 36px 0; }
+.empty .serif { font-size: 18px; }
+
+input[type=text], input[type=search], select {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 13px; font: inherit; color: var(--ink); outline: none; min-width: 0;
+}
+input:focus, select:focus { border-color: #C9C2B0; }
+button {
+  background: var(--ink); color: #fff; border: 0; border-radius: 10px;
+  padding: 9px 16px; font: inherit; font-weight: 550; cursor: pointer;
+}
+button:hover { opacity: .88; }
+button.ghost { background: transparent; color: var(--ink-2); padding: 4px 8px; }
+button.ghost:hover { color: var(--ink); opacity: 1; }
+button.x { background: transparent; color: var(--ink-2); padding: 2px 6px; font-size: 15px; }
+button.x:hover { color: var(--accent); opacity: 1; }
+.row { display: flex; gap: 10px; margin: 12px 0; flex-wrap: wrap; align-items: center; }
+.row input[type=text], .row input[type=search] { flex: 1; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+  padding: 6px 8px 6px 14px; display: inline-flex; align-items: center; gap: 4px;
+  box-shadow: var(--shadow); font-weight: 500;
+}
+
+/* -------------------------------------------------------------- settings */
+.set-card { background: var(--panel); border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 16px; }
+.set-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  padding: 14px 20px; border-top: 1px solid #F3EFE5;
+}
+.set-row:first-child { border-top: 0; }
+.set-row .l b { display: block; font-weight: 550; }
+.set-row .l small { color: var(--ink-2); }
+.switch { position: relative; width: 42px; height: 25px; flex: 0 0 auto; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute; inset: 0; background: #D9D2C0; border-radius: 999px;
+  transition: .18s; cursor: pointer;
+}
+.slider:before {
+  content: ""; position: absolute; width: 19px; height: 19px; border-radius: 50%;
+  left: 3px; top: 3px; background: #fff; transition: .18s;
+  box-shadow: 0 1px 3px rgba(0,0,0,.25);
+}
+.switch input:checked + .slider { background: var(--ink); }
+.switch input:checked + .slider:before { transform: translateX(17px); }
+.saved { color: var(--green); font-size: 13px; opacity: 0; transition: opacity .3s; }
+.saved.show { opacity: 1; }
+
+.toast {
+  position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%);
+  background: #16161A; color: #fff; padding: 10px 18px; border-radius: 999px;
+  font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .25s;
+}
+.toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<aside>
+  <div class="logo"><span class="serif">flow</span><span class="dot"></span>
+    <span style="font-size:11px;color:var(--ink-2);margin-left:6px;">local</span></div>
+  <nav id="nav">
+    <a href="#home" data-page="home">
+      <svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg>Home</a>
+    <a href="#history" data-page="history">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>History</a>
+    <a href="#dictionary" data-page="dictionary">
+      <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5v14z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></svg>Dictionary</a>
+    <a href="#settings" data-page="settings">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.56V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.56 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.56 1z"/></svg>Settings</a>
+  </nav>
+  <div class="side-foot">
+    <div class="pillhint"><span class="rec"></span><span id="pttHint">Hold Ctrl+Space</span></div>
+    <div>All processing stays on this device.</div>
+  </div>
+</aside>
+
+<main>
+  <!-- ------------------------------------------------------------- HOME -->
+  <section class="page" id="page-home">
+    <h1 id="greeting">Good morning<span class="serif" id="greetName"></span></h1>
+    <p class="sub">Here's your dictation at a glance.</p>
+    <div class="cards">
+      <div class="stat"><div class="num" id="sStreak">0</div>
+        <div class="lbl"><span class="flame">&#9650;</span> day streak</div></div>
+      <div class="stat"><div class="num" id="sWords">0</div>
+        <div class="lbl">words dictated</div></div>
+      <div class="stat"><div class="num" id="sWpm">0</div>
+        <div class="lbl">average speed (WPM)</div></div>
+      <div class="stat"><div class="num" id="sSaved">0<small>min</small></div>
+        <div class="lbl">time saved vs. typing</div></div>
+    </div>
+    <h2>Recent activity</h2>
+    <div class="card" id="recent"></div>
+  </section>
+
+  <!-- ---------------------------------------------------------- HISTORY -->
+  <section class="page" id="page-history">
+    <h1>History</h1>
+    <p class="sub">Everything you've dictated, stored locally.</p>
+    <div class="row">
+      <input type="search" id="q" placeholder="Search dictations&hellip;">
+      <button class="ghost" id="clearAll">Clear all</button>
+    </div>
+    <div class="card" id="histList"></div>
+  </section>
+
+  <!-- ------------------------------------------------------- DICTIONARY -->
+  <section class="page" id="page-dictionary">
+    <h1>Dictionary</h1>
+    <p class="sub">Names and jargon Flow should always get right.</p>
+    <div class="row"><input type="text" id="newWord" placeholder="Add a word, name or acronym&hellip;"><button id="addWord">Add</button></div>
+    <div class="chips" id="words"></div>
+    <h2>Text replacements</h2>
+    <p class="sub" style="margin-bottom:10px">Say the phrase on the left, get the text on the right.</p>
+    <div class="row">
+      <input type="text" id="rFrom" placeholder="When I say&hellip;" style="flex:1">
+      <input type="text" id="rTo" placeholder="Insert&hellip;" style="flex:1">
+      <button id="addRepl">Add</button>
+    </div>
+    <div class="chips" id="repls"></div>
+  </section>
+
+  <!-- --------------------------------------------------------- SETTINGS -->
+  <section class="page" id="page-settings">
+    <h1>Settings <span class="saved" id="savedTick">Saved &#10003;</span></h1>
+    <p class="sub">Changes are saved to your local config instantly.</p>
+
+    <h2>General</h2>
+    <div class="set-card">
+      <div class="set-row"><div class="l"><b>Your name</b><small>Used for the greeting</small></div>
+        <input type="text" id="userName" style="width:220px"></div>
+      <div class="set-row"><div class="l"><b>Language</b><small>"auto" detects per dictation</small></div>
+        <select id="engLang">
+          <option value="auto">Auto-detect</option><option value="en">English</option>
+          <option value="es">Spanish</option><option value="fr">French</option>
+          <option value="de">German</option><option value="it">Italian</option>
+          <option value="pt">Portuguese</option><option value="nl">Dutch</option>
+          <option value="ja">Japanese</option><option value="zh">Chinese</option>
+          <option value="ko">Korean</option><option value="hi">Hindi</option>
+        </select></div>
+      <div class="set-row"><div class="l"><b>Model</b><small>Bigger models are more accurate, slower</small></div>
+        <select id="engModel">
+          <option>tiny</option><option>base</option><option>small</option>
+          <option>medium</option><option>large-v3</option>
+        </select></div>
+    </div>
+
+    <h2>Hotkeys</h2>
+    <div class="set-card">
+      <div class="set-row"><div class="l"><b>Push to talk</b><small>Hold to dictate, release to insert</small></div>
+        <input type="text" id="hkPtt" style="width:220px"></div>
+      <div class="set-row"><div class="l"><b>Hands-free toggle</b><small>Auto-stops when you pause</small></div>
+        <input type="text" id="hkToggle" style="width:220px"></div>
+      <div class="set-row"><div class="l"><b>Command mode</b><small>Edit copied text by voice</small></div>
+        <input type="text" id="hkCmd" style="width:220px"></div>
+    </div>
+
+    <h2>Formatting</h2>
+    <div class="set-card" id="fmtRows"></div>
+
+    <h2>Output</h2>
+    <div class="set-card">
+      <div class="set-row"><div class="l"><b>Insertion method</b><small>How text reaches the focused app</small></div>
+        <select id="outMethod">
+          <option value="auto">Auto</option><option value="type">Simulated typing</option>
+          <option value="clipboard">Clipboard paste</option><option value="stdout">Stdout</option>
+        </select></div>
+      <div class="set-row"><div class="l"><b>Feedback sounds</b><small>Soft tones on start and stop</small></div>
+        <label class="switch"><input type="checkbox" id="sndFeedback"><span class="slider"></span></label></div>
+    </div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const jf = async (url, opts) => (await fetch(url, opts)).json();
+const esc = (s) => { const d = document.createElement('div'); d.innerText = s ?? ''; return d.innerHTML; };
+let CONFIG = null;
+
+/* ------------------------------------------------------------- routing */
+function route() {
+  const page = (location.hash || '#home').slice(1);
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('visible'));
+  document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.page === page));
+  const el = $('page-' + page);
+  (el || $('page-home')).classList.add('visible');
+  if (page === 'history') loadHistory();
+  if (page === 'home') { loadStats(); loadRecent(); }
+  if (page === 'dictionary') loadDict();
+}
+window.addEventListener('hashchange', route);
+
+/* ---------------------------------------------------------------- home */
+function greetingWord() {
+  const h = new Date().getHours();
+  return h < 5 ? 'Good night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+}
+async function loadStats() {
+  const s = await jf('/api/stats');
+  $('sStreak').innerText = s.streak_days;
+  $('sWords').innerText = s.total_words.toLocaleString();
+  $('sWpm').innerText = Math.round(s.average_wpm);
+  const typingMin = s.total_words / 40, spokeMin = s.total_audio_seconds / 60;
+  $('sSaved').innerHTML = Math.max(0, Math.round(typingMin - spokeMin)) + '<small>min</small>';
+}
+function renderEntries(el, entries, emptyMsg) {
+  if (!entries.length) {
+    el.innerHTML = `<div class="empty"><div class="serif">${emptyMsg}</div>
+      <div style="margin-top:6px">Hold <kbd id="k2">${esc(hotkeyLabel())}</kbd> and start speaking.</div></div>`;
+    return;
+  }
+  el.innerHTML = entries.map(e => `<div class="item">
+    <div class="txt">${esc(e.formatted_text)}</div>
+    <div class="meta"><span class="app">${esc(e.app || 'unknown app')}</span><br>${new Date(e.timestamp * 1000).toLocaleString()}</div>
+    <button class="x" onclick="delEntry(${e.id})" title="Delete">&#10005;</button></div>`).join('');
+}
+async function loadRecent() {
+  const h = await jf('/api/history?limit=8');
+  renderEntries($('recent'), h.entries, 'Nothing here yet');
+}
+
+/* -------------------------------------------------------------- history */
+async function loadHistory() {
+  const q = $('q').value;
+  const h = await jf('/api/history?limit=200&q=' + encodeURIComponent(q));
+  renderEntries($('histList'), h.entries, q ? 'No matches' : 'Nothing here yet');
+}
+async function delEntry(id) {
+  await jf('/api/history/delete', { method: 'POST', body: JSON.stringify({ id }) });
+  loadHistory(); loadRecent(); loadStats(); toast('Deleted');
+}
+$('q').addEventListener('input', loadHistory);
+$('clearAll').onclick = async () => {
+  await jf('/api/history/delete', { method: 'POST', body: JSON.stringify({ all: true }) });
+  loadHistory(); toast('History cleared');
+};
+
+/* ----------------------------------------------------------- dictionary */
+async function loadDict() {
+  const d = await jf('/api/dictionary');
+  $('words').innerHTML = d.words.map(w =>
+    `<span class="chip">${esc(w)}<button class="x" onclick="dictOp({remove:'${esc(w)}'})">&#10005;</button></span>`
+  ).join('') || '<span class="empty" style="padding:8px">No words yet</span>';
+  $('repls').innerHTML = Object.entries(d.replacements).map(([k, v]) =>
+    `<span class="chip">&ldquo;${esc(k)}&rdquo; &rarr; ${esc(v)}<button class="x" onclick="dictOp({remove_replacement:'${esc(k)}'})">&#10005;</button></span>`
+  ).join('') || '<span class="empty" style="padding:8px">No replacements yet</span>';
+}
+async function dictOp(payload) {
+  await jf('/api/dictionary', { method: 'POST', body: JSON.stringify(payload) });
+  loadDict();
+}
+$('addWord').onclick = () => { const w = $('newWord').value.trim(); if (w) { dictOp({ add: w }); $('newWord').value = ''; } };
+$('newWord').addEventListener('keydown', e => { if (e.key === 'Enter') $('addWord').click(); });
+$('addRepl').onclick = () => {
+  const f = $('rFrom').value.trim(), t = $('rTo').value;
+  if (f && t) { dictOp({ replace_from: f, replace_to: t }); $('rFrom').value = ''; $('rTo').value = ''; }
+};
+
+/* ------------------------------------------------------------- settings */
+const FMT_TOGGLES = [
+  ['remove_fillers', 'Remove filler words', '"um", "uh", "erm" disappear'],
+  ['apply_self_corrections', 'Apply self-corrections', '"at five, no wait, six" becomes "at six"'],
+  ['spoken_commands', 'Spoken commands', '"new line", "new paragraph"'],
+  ['spoken_punctuation', 'Spoken punctuation', 'Say "comma", "period" for , .'],
+  ['capitalize_sentences', 'Auto-capitalize', 'Sentences start uppercase'],
+  ['convert_numbers', 'Format numbers', '"twenty three" becomes 23'],
+  ['format_emails', 'Format emails', '"jo at gmail dot com" becomes jo@gmail.com'],
+];
+function hotkeyLabel() {
+  return (CONFIG?.hotkeys?.push_to_talk || 'Ctrl+Space').replaceAll('<', '').replaceAll('>', '').replaceAll('+', ' + ');
+}
+function buildSettings() {
+  $('fmtRows').innerHTML = FMT_TOGGLES.map(([key, label, hint]) => `
+    <div class="set-row"><div class="l"><b>${label}</b><small>${hint}</small></div>
+      <label class="switch"><input type="checkbox" data-fmt="${key}"><span class="slider"></span></label></div>`).join('');
+  document.querySelectorAll('[data-fmt]').forEach(el => {
+    el.checked = !!CONFIG.formatting[el.dataset.fmt];
+    el.onchange = () => save({ formatting: { [el.dataset.fmt]: el.checked } });
+  });
+  $('userName').value = CONFIG.user_name || '';
+  $('engLang').value = CONFIG.engine.language;
+  $('engModel').value = CONFIG.engine.model;
+  $('hkPtt').value = CONFIG.hotkeys.push_to_talk;
+  $('hkToggle').value = CONFIG.hotkeys.toggle_dictation;
+  $('hkCmd').value = CONFIG.hotkeys.command_mode;
+  $('outMethod').value = CONFIG.output.method;
+  $('sndFeedback').checked = !!CONFIG.audio.feedback_sounds;
+  $('userName').onchange = () => save({ user_name: $('userName').value }).then(applyGreeting);
+  $('engLang').onchange = () => save({ engine: { language: $('engLang').value } });
+  $('engModel').onchange = () => save({ engine: { model: $('engModel').value } });
+  $('hkPtt').onchange = () => save({ hotkeys: { push_to_talk: $('hkPtt').value } }).then(applyHint);
+  $('hkToggle').onchange = () => save({ hotkeys: { toggle_dictation: $('hkToggle').value } });
+  $('hkCmd').onchange = () => save({ hotkeys: { command_mode: $('hkCmd').value } });
+  $('outMethod').onchange = () => save({ output: { method: $('outMethod').value } });
+  $('sndFeedback').onchange = () => save({ audio: { feedback_sounds: $('sndFeedback').checked } });
+}
+async function save(patch) {
+  CONFIG = await jf('/api/settings', { method: 'POST', body: JSON.stringify(patch) });
+  $('savedTick').classList.add('show');
+  setTimeout(() => $('savedTick').classList.remove('show'), 1400);
+}
+function applyGreeting() {
+  const name = CONFIG.user_name ? ', ' + CONFIG.user_name : '';
+  $('greeting').childNodes[0].nodeValue = greetingWord();
+  $('greetName').innerText = name;
+}
+function applyHint() { $('pttHint').innerText = 'Hold ' + hotkeyLabel(); }
+
+function toast(msg) {
+  $('toast').innerText = msg; $('toast').classList.add('show');
+  setTimeout(() => $('toast').classList.remove('show'), 1500);
+}
+
+/* ----------------------------------------------------------------- init */
+(async function init() {
+  CONFIG = await jf('/api/settings');
+  buildSettings(); applyGreeting(); applyHint();
+  route();
+  setInterval(() => { if ((location.hash || '#home') === '#home') { loadStats(); loadRecent(); } }, 8000);
+})();
+</script>
+</body>
+</html>

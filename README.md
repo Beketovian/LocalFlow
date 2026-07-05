@@ -4,6 +4,13 @@
 
 Hold a hotkey, speak, release: your words appear — cleaned up and formatted — in whatever app has focus. Everything runs on your machine. No cloud, no account, no audio ever leaves your computer.
 
+![LocalFlow dashboard](docs/screenshots/ui_home.png)
+
+While you dictate, the floating pill shows a live waveform, then pulses while Whisper formats your words:
+
+![Recording pill - recording](docs/screenshots/pill-recording.png)
+![Recording pill - processing](docs/screenshots/pill-processing.png)
+
 ## Features
 
 | Wispr Flow | LocalFlow |
@@ -17,6 +24,8 @@ Hold a hotkey, speak, release: your words appear — cleaned up and formatted �
 | Whisper-quiet speech | ✅ automatic RMS gain normalization rescues very quiet audio |
 | 100+ languages | ✅ multilingual Whisper models with auto-detection or a pinned language |
 | Live preview while speaking | ✅ pseudo-streaming partial transcripts via background re-transcription |
+| Floating recording pill with live waveform | ✅ frameless always-on-top capsule (tkinter): coral dot + waveform while recording, pulsing dots while formatting |
+| Dashboard app (greeting, streak, WPM, time saved, activity) | ✅ the full Flow-style app: Home / History / Dictionary / Settings with live-saving toggles (`localflow ui`) |
 | History, streaks, WPM stats | ✅ local SQLite + web dashboard (`http://127.0.0.1:5170`) |
 | Privacy | ✅ **stronger**: 100% offline — Wispr Flow sends audio to the cloud, LocalFlow never does |
 
@@ -61,6 +70,7 @@ localflow config set hotkeys.push_to_talk "<f9>"
 ### Other commands
 
 ```bash
+localflow ui                             # open the dashboard app on its own
 localflow transcribe memo.wav            # transcribe an audio file (add --json, --raw)
 localflow listen                         # one hands-free dictation, prints the text
 localflow dictionary add Wispr           # teach it names/jargon
@@ -93,7 +103,7 @@ Every OS-dependent piece (microphone, hotkeys, window detection, typing) sits be
 
 ```bash
 pip install -e ".[dev]"
-pytest                # 147 tests
+pytest                # 159 tests
 ```
 
 The suite includes true end-to-end tests: speech is synthesized with `espeak-ng`, transcribed by a **real Whisper model** (whisper.cpp `ggml-tiny`), formatted, and injected — no mocks. Those tests auto-skip when `espeak-ng` or the model isn't available; everything else runs anywhere. Drop a model at `tests/models/ggml-tiny.bin` (or `~/.local/share/localflow/models/`) to enable them.

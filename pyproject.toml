@@ -45,6 +45,9 @@ localflow = "localflow.cli:main"
 [tool.setuptools.packages.find]
 include = ["localflow*"]
 
+[tool.setuptools.package-data]
+localflow = ["static/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
