@@ -52,10 +52,13 @@ def synth_speech(text: str, out_path: Path, speed: int = 140) -> np.ndarray:
 
 @pytest.fixture(autouse=True)
 def _no_local_llm_autoprobe(monkeypatch):
-    """Keep tests off any real LM Studio/Ollama running on this machine.
+    """Keep tests hermetic on machines with a real local-LLM setup.
 
-    LLM tests that want a server set an explicit base_url to a fake one."""
+    Neutralizes both the server auto-probe (a running LM Studio/Ollama) and
+    the embedded backend's search of LM Studio's model folders. Tests that
+    want a server use a fake one; embedded tests build fake weight dirs."""
     monkeypatch.setattr("localflow.llm._PROBE_URLS", ())
+    monkeypatch.setattr("localflow.llm_local._LMSTUDIO_MODEL_ROOTS", ())
 
 
 @pytest.fixture(scope="session")

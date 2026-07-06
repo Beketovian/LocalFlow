@@ -103,9 +103,18 @@ class LLMConfig:
     LocalFlow silently falls back to rule-based formatting."""
 
     enabled: bool = True
+    # Where the model runs:
+    #   auto     - a running server (LM Studio/Ollama) if found, otherwise
+    #              in-process via MLX (no external app needed)
+    #   server   - only talk to an OpenAI-compatible server
+    #   embedded - only run in-process (Apple Silicon, needs mlx-lm)
+    backend: str = "auto"
     # "auto" probes LM Studio (127.0.0.1:1234) then Ollama (127.0.0.1:11434);
     # or set an explicit base URL like "http://127.0.0.1:1234/v1"
     base_url: str = "auto"
+    # Embedded backend: explicit path to an MLX model directory. Unset means
+    # search LocalFlow's data dir, then LM Studio's model folders.
+    model_path: Optional[str] = None
     # "auto" picks the first chat-capable model the server reports
     model: str = "auto"
     api_key: str = ""

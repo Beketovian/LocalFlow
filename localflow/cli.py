@@ -210,8 +210,9 @@ def cmd_run(args) -> int:
             # load the model off the hot path so the first dictation is fast
             threading.Thread(target=controller.llm.warm_up, daemon=True).start()
         else:
-            print("  ai formatting: no local model server found "
-                  "(start LM Studio or Ollama) - using rule-based formatting")
+            print("  ai formatting: no model available - using rule-based "
+                  "formatting (run 'localflow llm download' for the built-in "
+                  "model, or start LM Studio/Ollama)")
 
     dashboard = None
     if config.dashboard.enabled:
@@ -501,6 +502,30 @@ def cmd_config(args) -> int:
     return 0
 
 
+def cmd_llm(args) -> int:
+    """Manage the built-in (embedded) LLM used for AI formatting."""
+    from .llm import LLMClient
+    from .llm_local import DEFAULT_REPO, download_default_model, find_local_model
+
+    config = _load_config(args)
+    data_dir = config.resolved_data_dir()
+    if args.action == "download":
+        print(f"Downloading {DEFAULT_REPO} (~2.3 GB)...")
+        path = download_default_model(data_dir, progress=print)
+        print(f"Done. LocalFlow will use it automatically: {path}")
+        return 0
+    # status
+    client = LLMClient(config.llm, data_dir=data_dir)
+    if client.available:
+        print(f"backend: {client.mode}")
+        print(f"model:   {client.model} @ {client.base_url}")
+    else:
+        print("no LLM available - AI formatting falls back to rules")
+    local = find_local_model(data_dir, config.llm.model_path, config.llm.model)
+    print(f"local weights: {local or 'none found'}")
+    return 0
+
+
 def cmd_doctor(args) -> int:
     import importlib.util
 
@@ -597,6 +622,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("pair", nargs="*", metavar="KEY VALUE",
                    help="e.g. engine.model base")
     p.set_defaults(func=cmd_config)
+
+    p = sub.add_parser("llm", help="manage the built-in AI-formatting model")
+    p.add_argument("action", choices=["status", "download"], nargs="?",
+                   default="status")
+    p.set_defaults(func=cmd_llm)
 
     p = sub.add_parser("doctor", help="diagnose the installation")
     p.set_defaults(func=cmd_doctor)

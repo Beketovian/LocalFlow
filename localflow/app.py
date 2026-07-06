@@ -74,7 +74,8 @@ class FlowController:
         self.injector = injector or CallbackInjector()
         self.window_provider = window_provider or ActiveWindowProvider()
         self.sounds = sounds or SoundPlayer(enabled=self.config.audio.feedback_sounds)
-        self.llm = llm or LLMClient(self.config.llm)
+        self.llm = llm or LLMClient(self.config.llm,
+                                    data_dir=self.config.resolved_data_dir())
         self.commands = command_processor or CommandProcessor(llm_edit=self._llm_edit)
         self.dictionary = PersonalDictionary(
             words=self.config.dictionary, replacements=self.config.replacements

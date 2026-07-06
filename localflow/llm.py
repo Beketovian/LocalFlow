@@ -1,10 +1,15 @@
 """Local LLM post-processing - Wispr Flow's AI layer, running on your machine.
 
-Talks to any OpenAI-compatible chat endpoint. With base_url "auto" it probes
-the two servers people actually run locally:
+Two interchangeable backends behind one client:
 
-* LM Studio  - http://127.0.0.1:1234/v1
-* Ollama     - http://127.0.0.1:11434/v1
+* server   - any OpenAI-compatible chat endpoint. With base_url "auto" it
+             probes LM Studio (127.0.0.1:1234) then Ollama (127.0.0.1:11434).
+* embedded - in-process inference via Apple MLX (see localflow.llm_local);
+             no external app needed. This is what the packaged LocalFlow.app
+             uses.
+
+With backend "auto", a running server wins (it may host a bigger model the
+user chose), otherwise local weights are loaded in-process.
 
 Used for two things:
 
@@ -20,14 +25,16 @@ so dictation keeps working when no model server is up.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import threading
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import List, Optional
 
-from .config import LLMConfig
+from .config import LLMConfig, default_data_dir
 
 _PROBE_URLS = (
     "http://127.0.0.1:1234/v1",   # LM Studio
@@ -90,13 +97,17 @@ def _sanitize(text: str) -> str:
 class LLMClient:
     """Lazy, thread-safe client for a local OpenAI-compatible server."""
 
-    def __init__(self, config: Optional[LLMConfig] = None) -> None:
+    def __init__(self, config: Optional[LLMConfig] = None,
+                 data_dir: Optional[Path] = None) -> None:
         self.config = config or LLMConfig()
+        self.data_dir = data_dir or default_data_dir()
         self._lock = threading.Lock()
         self._base_url: Optional[str] = None  # resolved; None = not probed yet
         self._model: Optional[str] = None
         self._models: List[str] = []
         self._probed = False
+        self._mode: Optional[str] = None  # "server" | "embedded"
+        self._engine = None  # llm_local.EmbeddedEngine when mode == embedded
 
     # -------------------------------------------------------------- probing
 
@@ -116,39 +127,73 @@ class LLMClient:
         return [m.get("id", "") for m in data.get("data", []) if m.get("id")]
 
     def probe(self, force: bool = False) -> bool:
-        """Find a server and pick a model. Cached; cheap to call repeatedly."""
+        """Resolve a backend and pick a model. Cached; cheap to call again."""
         with self._lock:
             if self._probed and not force:
-                return self._base_url is not None
+                return self._mode is not None
             self._probed = True
             self._base_url = None
             self._models = []
+            self._model = None
+            self._mode = None
+            self._engine = None
 
-            candidates = (
-                _PROBE_URLS if self.config.base_url == "auto"
-                else (self.config.base_url,)
-            )
-            for base in candidates:
-                try:
-                    models = self._list_models(base)
-                except (urllib.error.URLError, OSError, ValueError):
-                    continue
-                self._base_url = base.rstrip("/")
-                self._models = models
-                break
-            if self._base_url is None:
-                return False
+            backend = self.config.backend
+            if backend in ("auto", "server") and self._probe_server():
+                self._mode = "server"
+                return True
+            if backend in ("auto", "embedded") and self._probe_embedded():
+                self._mode = "embedded"
+                return True
+            return False
 
-            if self.config.model != "auto":
-                self._model = self.config.model
-            else:
-                chat_models = [m for m in self._models if not _NON_CHAT.search(m)]
-                self._model = chat_models[0] if chat_models else None
-            return self._model is not None
+    def _probe_server(self) -> bool:
+        candidates = (
+            _PROBE_URLS if self.config.base_url == "auto"
+            else (self.config.base_url,)
+        )
+        for base in candidates:
+            try:
+                models = self._list_models(base)
+            except (urllib.error.URLError, OSError, ValueError):
+                continue
+            self._base_url = base.rstrip("/")
+            self._models = models
+            break
+        if self._base_url is None:
+            return False
+
+        if self.config.model != "auto":
+            self._model = self.config.model
+        else:
+            chat_models = [m for m in self._models if not _NON_CHAT.search(m)]
+            self._model = chat_models[0] if chat_models else None
+        return self._model is not None
+
+    def _probe_embedded(self) -> bool:
+        if importlib.util.find_spec("mlx_lm") is None:
+            return False
+        from .llm_local import EmbeddedEngine, find_local_model
+
+        path = find_local_model(self.data_dir, self.config.model_path,
+                                self.config.model)
+        if path is None:
+            return False
+        self._engine = EmbeddedEngine(path, temperature=self.config.temperature)
+        self._model = self._engine.name
+        self._models = [self._model]
+        self._base_url = "in-process (MLX)"
+        return True
 
     @property
     def available(self) -> bool:
         return self.probe()
+
+    @property
+    def mode(self) -> Optional[str]:
+        """"server", "embedded", or None when no backend is available."""
+        self.probe()
+        return self._mode
 
     @property
     def base_url(self) -> Optional[str]:
@@ -166,8 +211,8 @@ class LLMClient:
         return list(self._models)
 
     def warm_up(self) -> None:
-        """Fire a tiny request so the server loads the model off the hot path
-        (LM Studio and Ollama load models lazily on first use)."""
+        """Load the model off the hot path: servers JIT-load on first use,
+        and the embedded engine compiles kernels on its first generation."""
         if not self.probe():
             return
         try:
@@ -177,12 +222,15 @@ class LLMClient:
                 timeout=max(self.config.timeout, 120.0),
             )
         except Exception:
-            pass
+            pass  # includes the expected 1-token "truncated" rejection
 
     # ------------------------------------------------------------- requests
 
     def _chat(self, messages: list, max_tokens: Optional[int] = None,
               timeout: Optional[float] = None) -> str:
+        if self._mode == "embedded":
+            # In-process: no HTTP, no reasoning models, plain token cap.
+            return self._engine.chat(messages, max_tokens=max_tokens or 512)
         payload = {
             "model": self._model,
             "messages": messages,
