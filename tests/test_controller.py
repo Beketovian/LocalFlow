@@ -187,3 +187,24 @@ class TestDictateArray:
         event = controller.dictate_array(speechlike())
         assert event.formatted_text == "File transcription"
         assert event.duration == pytest.approx(1.0, abs=0.01)
+
+
+class TestStatusRecovery:
+    def test_status_resets_when_recorder_raises(self):
+        # If the recorder (or anything downstream) raises, status must return
+        # to idle - otherwise the pill shows "processing" dots forever.
+        controller, _, _ = make_controller()
+        statuses = []
+        controller.on_status(statuses.append)
+        controller.start_recording()
+
+        def explode():
+            raise RuntimeError("mic went away")
+
+        controller.recorder.stop = explode
+        try:
+            controller.stop_recording()
+        except RuntimeError:
+            pass
+        assert controller.state.status == "idle"
+        assert statuses[-1] == "idle"

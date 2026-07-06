@@ -67,3 +67,46 @@ class TestHotkeys:
         listener.handle_press(None)
         listener.handle_release(None)
         assert events == []
+
+
+class TestCallbackSafety:
+    def test_raising_callback_does_not_propagate(self, capsys):
+        # A raising callback would kill pynput's listener thread and silently
+        # disable every hotkey; handle_* must swallow and report instead.
+        def boom():
+            raise RuntimeError("kaboom")
+
+        listener = HotkeyListener(
+            push_to_talk="<ctrl>+<space>",
+            toggle_dictation="<ctrl>+<shift>+<space>",
+            command_mode="<ctrl>+<alt>+<space>",
+            on_ptt_press=boom,
+            on_ptt_release=boom,
+            on_toggle=boom,
+            on_command=boom,
+        )
+        listener.handle_press("ctrl")
+        listener.handle_press("space")   # ptt press -> boom, swallowed
+        listener.handle_release("space")  # ptt release -> boom, swallowed
+        assert "kaboom" in capsys.readouterr().err
+
+    def test_ptt_state_survives_raising_callback(self):
+        calls = []
+
+        def bad_press():
+            calls.append("press")
+            raise RuntimeError("kaboom")
+
+        listener = HotkeyListener(
+            push_to_talk="<ctrl>+<space>",
+            toggle_dictation="",
+            command_mode="",
+            on_ptt_press=bad_press,
+            on_ptt_release=lambda: calls.append("release"),
+            on_toggle=lambda: None,
+            on_command=lambda: None,
+        )
+        listener.handle_press("ctrl")
+        listener.handle_press("space")
+        listener.handle_release("space")  # release still delivered
+        assert calls == ["press", "release"]

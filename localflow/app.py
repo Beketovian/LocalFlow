@@ -144,9 +144,12 @@ class FlowController:
             if self.state.status != "recording":
                 return None
             self._set_status("transcribing")
-        self.sounds.stop()
-        audio = self.recorder.stop()
+        # Everything below the status change sits in one try/finally: if the
+        # recorder, sounds or pipeline raise, the status must still return to
+        # idle or the pill stays stuck on "processing" forever.
         try:
+            self.sounds.stop()
+            audio = self.recorder.stop()
             event = self._process_audio(audio, mode=self.state.mode)
         finally:
             with self._lock:

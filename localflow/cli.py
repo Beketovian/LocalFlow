@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -110,7 +111,40 @@ def _warn_if_macos_untrusted() -> None:
         )
 
 
+def _acquire_daemon_lock(config: Config):
+    """One daemon at a time. Two instances double-transcribe, double-paste
+    and fight over the hotkeys (seen in the wild with a Ctrl+Z'd daemon).
+
+    Returns an open, flock-ed file to hold for the process lifetime, or None
+    when another live daemon holds the lock.
+    """
+    path = config.resolved_data_dir() / "daemon.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, "a+")
+    try:
+        import fcntl
+
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except ImportError:
+        return handle  # Windows: no flock; stay permissive
+    except OSError:
+        handle.seek(0)
+        pid = handle.read().strip() or "unknown pid"
+        handle.close()
+        print(f"Another 'localflow run' is already active ({pid}).\n"
+              f"Stop it first (Ctrl+C in its terminal, or: kill {pid}).\n"
+              f"Note: a daemon suspended with Ctrl+Z still counts - "
+              f"resume it with 'fg' and Ctrl+C it.")
+        return None
+    handle.seek(0)
+    handle.truncate()
+    handle.write(str(os.getpid()))
+    handle.flush()
+    return handle
+
+
 def cmd_run(args) -> int:
+    import queue
     import threading
 
     from .app import FlowController
@@ -121,6 +155,10 @@ def cmd_run(args) -> int:
     from .overlay import RecordingOverlay
 
     config = _load_config(args)
+
+    lock = _acquire_daemon_lock(config)
+    if lock is None:
+        return 1
 
     # The floating recording pill (Wispr Flow's on-screen widget). Feeds on
     # live mic levels; silently unavailable on headless systems. On macOS,
@@ -194,6 +232,25 @@ def cmd_run(args) -> int:
 
     hands_free = {"on": False}
 
+    # Hotkey callbacks run on pynput's macOS event tap, and the OS *disables*
+    # taps that block (kCGEventTapDisabledByTimeout) - transcription takes
+    # seconds, so doing it inline kills all hotkeys. A single worker thread
+    # runs the real work; callbacks just enqueue, returning in microseconds.
+    # One worker also preserves press/release ordering.
+    actions: "queue.Queue" = queue.Queue()
+
+    def action_worker() -> None:
+        while True:
+            fn = actions.get()
+            if fn is None:
+                return
+            try:
+                fn()
+            except Exception as exc:
+                print(f"  ! dictation failed: {exc!r}")
+
+    threading.Thread(target=action_worker, daemon=True).start()
+
     def ptt_press() -> None:
         controller.start_recording()
 
@@ -240,10 +297,10 @@ def cmd_run(args) -> int:
         push_to_talk=config.hotkeys.push_to_talk,
         toggle_dictation=config.hotkeys.toggle_dictation,
         command_mode=config.hotkeys.command_mode,
-        on_ptt_press=ptt_press,
-        on_ptt_release=ptt_release,
-        on_toggle=toggle,
-        on_command=command_mode,
+        on_ptt_press=lambda: actions.put(ptt_press),
+        on_ptt_release=lambda: actions.put(ptt_release),
+        on_toggle=lambda: actions.put(toggle),
+        on_command=lambda: actions.put(command_mode),
     )
     listener.start()
     print(f"  hold {config.hotkeys.push_to_talk} to dictate;"
@@ -287,6 +344,7 @@ def cmd_run(args) -> int:
         print("\nbye")
     finally:
         stop_event.set()
+        actions.put(None)
         listener.stop()
         if dashboard:
             dashboard.stop()
@@ -295,6 +353,7 @@ def cmd_run(args) -> int:
         if overlay_ok:
             overlay.stop()
         controller.close()
+        lock.close()
     return 0
 
 
