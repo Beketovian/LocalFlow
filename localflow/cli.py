@@ -135,6 +135,19 @@ def _acquire_daemon_lock(config: Config):
               f"Stop it first (Ctrl+C in its terminal, or: kill {pid}).\n"
               f"Note: a daemon suspended with Ctrl+Z still counts - "
               f"resume it with 'fg' and Ctrl+C it.")
+        if sys.platform == "darwin" and os.environ.get("LOCALFLOW_APP"):
+            # Double-clicked the app with no terminal to read: say it out
+            # loud instead of dying silently.
+            try:
+                import subprocess
+
+                subprocess.run(["osascript", "-e",
+                    'display alert "LocalFlow is already running" message '
+                    f'"Another LocalFlow (or a terminal localflow run, pid {pid}) '
+                    'is active. Quit it from the menu bar icon, or run: '
+                    f'kill {pid}"'], timeout=60)
+            except Exception:
+                pass
         return None
     handle.seek(0)
     handle.truncate()
