@@ -251,6 +251,18 @@ button.x:hover { color: var(--accent); opacity: 1; }
     <h2>Formatting</h2>
     <div class="set-card" id="fmtRows"></div>
 
+    <h2>AI formatting <span style="font-weight:400;font-size:12px;opacity:.6" id="llmStatus"></span></h2>
+    <div class="set-card">
+      <div class="set-row"><div class="l"><b>Local LLM cleanup</b><small>Grammar, fillers and self-corrections via a local model (LM Studio / Ollama)</small></div>
+        <label class="switch"><input type="checkbox" id="llmEnabled"><span class="slider"></span></label></div>
+      <div class="set-row"><div class="l"><b>Model</b><small>"auto" picks the first chat model on the server</small></div>
+        <select id="llmModel" style="max-width:280px"><option value="auto">Auto</option></select></div>
+      <div class="set-row"><div class="l"><b>Server</b><small>"auto" probes LM Studio then Ollama; or a base URL like http://127.0.0.1:1234/v1</small></div>
+        <input type="text" id="llmUrl" style="width:280px"></div>
+      <div class="set-row"><div class="l"><b>Command mode edits</b><small>Free-form spoken instructions use the LLM</small></div>
+        <label class="switch"><input type="checkbox" id="llmCmd"><span class="slider"></span></label></div>
+    </div>
+
     <h2>Output</h2>
     <div class="set-card">
       <div class="set-row"><div class="l"><b>Insertion method</b><small>How text reaches the focused app</small></div>
@@ -379,6 +391,10 @@ function buildSettings() {
   $('hkCmd').value = CONFIG.hotkeys.command_mode;
   $('outMethod').value = CONFIG.output.method;
   $('sndFeedback').checked = !!CONFIG.audio.feedback_sounds;
+  $('llmEnabled').checked = !!CONFIG.llm?.enabled;
+  $('llmCmd').checked = !!CONFIG.llm?.command_mode;
+  $('llmUrl').value = CONFIG.llm?.base_url || 'auto';
+  loadLLMStatus();
   $('userName').onchange = () => save({ user_name: $('userName').value }).then(applyGreeting);
   $('engLang').onchange = () => save({ engine: { language: $('engLang').value } });
   $('engModel').onchange = () => save({ engine: { model: $('engModel').value } });
@@ -387,6 +403,22 @@ function buildSettings() {
   $('hkCmd').onchange = () => save({ hotkeys: { command_mode: $('hkCmd').value } });
   $('outMethod').onchange = () => save({ output: { method: $('outMethod').value } });
   $('sndFeedback').onchange = () => save({ audio: { feedback_sounds: $('sndFeedback').checked } });
+  $('llmEnabled').onchange = () => save({ llm: { enabled: $('llmEnabled').checked } });
+  $('llmCmd').onchange = () => save({ llm: { command_mode: $('llmCmd').checked } });
+  $('llmModel').onchange = () => save({ llm: { model: $('llmModel').value } }).then(loadLLMStatus);
+  $('llmUrl').onchange = () => save({ llm: { base_url: $('llmUrl').value.trim() || 'auto' } }).then(loadLLMStatus);
+}
+async function loadLLMStatus() {
+  try {
+    const s = await jf('/api/llm?refresh=1');
+    $('llmStatus').innerText = s.available
+      ? `— connected: ${s.model} @ ${s.base_url}`
+      : '— no local model server found (start LM Studio or Ollama)';
+    const current = CONFIG.llm?.model || 'auto';
+    $('llmModel').innerHTML = '<option value="auto">Auto</option>' +
+      (s.models || []).map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+    $('llmModel').value = (s.models || []).includes(current) || current === 'auto' ? current : 'auto';
+  } catch (e) { $('llmStatus').innerText = ''; }
 }
 async function save(patch) {
   CONFIG = await jf('/api/settings', { method: 'POST', body: JSON.stringify(patch) });

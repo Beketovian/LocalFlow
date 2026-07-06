@@ -17,10 +17,10 @@ While you dictate, the floating pill shows a live waveform, then pulses while Wh
 |---|---|
 | Push-to-talk dictation into any app | ✅ hold a global hotkey, release to insert text at your cursor |
 | Hands-free mode | ✅ toggle on; recording auto-stops on silence (built-in VAD) |
-| AI formatting | ✅ local rule engine: filler-word removal ("um", "uh"), self-corrections ("at five — no wait, six" → "at six"), spoken commands ("new line", "new paragraph"), spelled-out numbers → digits, spoken emails → `name@domain.com`, sentence capitalization |
+| AI formatting | ✅ two layers: a local rule engine (filler-word removal, self-corrections "at five — no wait, six" → "at six", spoken commands, spelled-out numbers → digits, spoken emails → `name@domain.com`, capitalization) **plus an optional local-LLM cleanup pass** — LocalFlow auto-detects LM Studio or Ollama and uses whatever chat model you have loaded; falls back to rules when no server is running |
 | Personal dictionary | ✅ names/jargon are fed to Whisper as a bias prompt **and** fuzzy-corrected after transcription; plus text replacements ("omw" → "on my way") |
 | Context awareness / app-aware tone | ✅ per-app profiles (terminal, code editor, chat, email, docs) adjust capitalization & punctuation automatically |
-| Command mode (edit selected text by voice) | ✅ local commands (uppercase, bullet list, snake case, fix punctuation, shorten, …) + optional hook to any OpenAI-compatible LLM endpoint (e.g. local Ollama) for free-form edits |
+| Command mode (edit selected text by voice) | ✅ local commands (uppercase, bullet list, snake case, fix punctuation, shorten, …) + free-form edits ("translate to french", "make it friendlier") via the same local LLM |
 | Whisper-quiet speech | ✅ automatic RMS gain normalization rescues very quiet audio |
 | 100+ languages | ✅ multilingual Whisper models with auto-detection or a pinned language |
 | Live preview while speaking | ✅ pseudo-streaming partial transcripts via background re-transcription |
@@ -47,7 +47,7 @@ localflow doctor
 Platform notes:
 
 * **Linux (X11)**: install `xdotool` for the most reliable text injection; `portaudio19-dev` may be needed for `sounddevice`.
-* **macOS**: grant Accessibility + Microphone permissions to your terminal (System Settings → Privacy & Security).
+* **macOS**: grant Accessibility + Microphone permissions to your terminal (System Settings → Privacy & Security). Text is inserted by pasting (pbcopy + a synthesized ⌘V, like Wispr Flow) — simulated typing is unreliable in Messages/Slack/Electron apps.
 * **Windows**: works out of the box with `pip install`.
 
 ## Usage
@@ -89,9 +89,9 @@ mic (sounddevice) ──► Recorder ──► VAD / RMS normalize ──► STT
                                                             (faster-whisper | whisper.cpp)
                                                                     │  ◄─ dictionary bias prompt
                                                                     ▼
-   focused app ◄── Injector (xdotool / pynput / clipboard) ◄── Formatter ◄── dictionary correction
-       ▲                                                        (fillers, corrections, commands,
-       │                                                         numbers, emails, app profile tone)
+   focused app ◄── Injector (⌘V paste / xdotool / pynput) ◄── Formatter ◄── dictionary correction
+       ▲                                                        (rule engine + local LLM cleanup
+       │                                                         via LM Studio/Ollama, app tone)
   HotkeyListener (pynput)                                               │
   Tray icon (pystray)          History (SQLite) ◄── FlowController ◄────┘
   Dashboard (localhost)  ◄────────┘
@@ -110,7 +110,7 @@ The suite includes true end-to-end tests: speech is synthesized with `espeak-ng`
 
 ## Limitations vs. Wispr Flow
 
-* Formatting/command mode is rule-based rather than LLM-based (optionally point `CommandProcessor` at a local Ollama for free-form edits). It covers the high-value cases but won't rewrite tone.
+* The LLM cleanup pass adds latency proportional to your model's speed (a few seconds on Apple Silicon with a mid-size model). Turn it off in Settings → AI formatting, or pick a smaller/faster model, if you'd rather have instant rule-based-only insertion.
 * "Streaming" preview re-transcribes the buffer periodically; Whisper isn't natively streaming.
 * Wayland restricts global hotkeys and synthetic typing; X11/macOS/Windows are the happy paths.
 

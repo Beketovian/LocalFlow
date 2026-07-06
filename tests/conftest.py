@@ -50,6 +50,14 @@ def synth_speech(text: str, out_path: Path, speed: int = 140) -> np.ndarray:
     return load_wav(raw)
 
 
+@pytest.fixture(autouse=True)
+def _no_local_llm_autoprobe(monkeypatch):
+    """Keep tests off any real LM Studio/Ollama running on this machine.
+
+    LLM tests that want a server set an explicit base_url to a fake one."""
+    monkeypatch.setattr("localflow.llm._PROBE_URLS", ())
+
+
 @pytest.fixture(scope="session")
 def model_path():
     path = find_model()

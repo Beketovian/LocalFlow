@@ -164,6 +164,16 @@ def cmd_run(args) -> int:
     print(f"LocalFlow {__version__} - local voice dictation")
     print(f"  engine: {config.engine.backend} / {config.engine.model}"
           f" (language: {config.engine.language})")
+    print(f"  insert: {controller.injector.name}")
+
+    if config.llm.enabled:
+        if controller.llm.available:
+            print(f"  ai formatting: {controller.llm.model} @ {controller.llm.base_url}")
+            # load the model off the hot path so the first dictation is fast
+            threading.Thread(target=controller.llm.warm_up, daemon=True).start()
+        else:
+            print("  ai formatting: no local model server found "
+                  "(start LM Studio or Ollama) - using rule-based formatting")
 
     dashboard = None
     if config.dashboard.enabled:
@@ -436,6 +446,15 @@ def cmd_doctor(args) -> int:
     ):
         ok = importlib.util.find_spec(mod) is not None
         print(f"{mod}: {'ok' if ok else f'missing ({why})'}")
+    from .llm import LLMClient
+
+    llm = LLMClient(config.llm)
+    if llm.available:
+        print(f"local LLM: {llm.model} @ {llm.base_url} "
+              f"({len(llm.models)} model(s) available)")
+    else:
+        print("local LLM: not found (optional - start LM Studio or Ollama "
+              "for AI formatting)")
     try:
         import sounddevice as sd
 

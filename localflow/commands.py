@@ -94,10 +94,14 @@ class CommandProcessor:
         llm_url: Optional[str] = None,
         llm_model: str = "llama3.2",
         llm_api_key: Optional[str] = None,
+        llm_edit: Optional[Callable[[str, str], Optional[str]]] = None,
     ) -> None:
         self.llm_url = llm_url
         self.llm_model = llm_model
         self.llm_api_key = llm_api_key
+        # Preferred hook: (instruction, text) -> edited text or None.
+        # Used for instructions the rules don't cover (see localflow.llm).
+        self.llm_edit = llm_edit
 
     def apply(self, instruction: str, text: str) -> Optional[str]:
         """Transform `text` per the spoken `instruction`.
@@ -112,6 +116,8 @@ class CommandProcessor:
         for pattern, transform in _RULES.items():
             if re.search(pattern, instruction):
                 return transform(text)
+        if self.llm_edit:
+            return self.llm_edit(instruction, text)
         if self.llm_url:
             return self._ask_llm(instruction, text)
         return None

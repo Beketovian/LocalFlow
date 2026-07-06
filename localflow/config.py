@@ -96,6 +96,31 @@ class FormattingConfig:
 
 
 @dataclass
+class LLMConfig:
+    """Local LLM post-processing (LM Studio, Ollama, or any OpenAI-compatible
+    server). Cleans up dictations beyond what the rules can do, and powers
+    free-form command mode. Fully optional: when no server is reachable,
+    LocalFlow silently falls back to rule-based formatting."""
+
+    enabled: bool = True
+    # "auto" probes LM Studio (127.0.0.1:1234) then Ollama (127.0.0.1:11434);
+    # or set an explicit base URL like "http://127.0.0.1:1234/v1"
+    base_url: str = "auto"
+    # "auto" picks the first chat-capable model the server reports
+    model: str = "auto"
+    api_key: str = ""
+    # Give up and use the rule-based text if the LLM takes longer than this
+    timeout: float = 10.0
+    temperature: float = 0.2
+    # Skip the LLM for very long transcripts (latency)
+    max_chars: int = 6000
+    # Rewrite dictations (grammar, fillers, self-corrections)
+    format_dictation: bool = True
+    # Use the LLM for free-form command-mode instructions
+    command_mode: bool = True
+
+
+@dataclass
 class OutputConfig:
     # How to put text into the focused app: auto | type | clipboard | stdout | none
     method: str = "auto"
@@ -175,6 +200,7 @@ class Config:
     hotkeys: HotkeyConfig = field(default_factory=HotkeyConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
     formatting: FormattingConfig = field(default_factory=FormattingConfig)
+    llm: LLMConfig = field(default_factory=LLMConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     dashboard: DashboardConfig = field(default_factory=DashboardConfig)
     profiles: List[AppProfile] = field(default_factory=default_profiles)
@@ -204,6 +230,7 @@ class Config:
             ("hotkeys", HotkeyConfig),
             ("audio", AudioConfig),
             ("formatting", FormattingConfig),
+            ("llm", LLMConfig),
             ("output", OutputConfig),
             ("dashboard", DashboardConfig),
         ):

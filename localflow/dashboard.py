@@ -154,6 +154,16 @@ class DashboardServer:
                         "words": controller.dictionary.words,
                         "replacements": controller.dictionary.replacements,
                     })
+                elif url.path == "/api/llm":
+                    params = parse_qs(url.query)
+                    force = (params.get("refresh") or ["0"])[0] == "1"
+                    available = controller.llm.probe(force=force)
+                    self._send({
+                        "available": available,
+                        "base_url": controller.llm.base_url,
+                        "model": controller.llm.model,
+                        "models": controller.llm.models,
+                    })
                 elif url.path == "/api/state":
                     self._send({
                         "status": controller.state.status,

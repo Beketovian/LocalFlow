@@ -24,6 +24,7 @@ from .engines.base import STTEngine
 from .formatting import format_transcript, smart_join
 from .history import History
 from .injector import CallbackInjector, Injector
+from .llm import LLMClient
 from .sounds import SoundPlayer
 from .vad import SilenceDetector, trim_silence
 
@@ -40,6 +41,7 @@ class DictationEvent:
     duration: float = 0.0
     mode: str = "dictation"
     elapsed: float = 0.0
+    llm_used: bool = False
 
 
 @dataclass
@@ -62,6 +64,7 @@ class FlowController:
         window_provider: Optional[ActiveWindowProvider] = None,
         sounds: Optional[SoundPlayer] = None,
         command_processor: Optional[CommandProcessor] = None,
+        llm: Optional[LLMClient] = None,
     ) -> None:
         self.config = config or Config()
         self._engine = engine
@@ -69,7 +72,8 @@ class FlowController:
         self.injector = injector or CallbackInjector()
         self.window_provider = window_provider or ActiveWindowProvider()
         self.sounds = sounds or SoundPlayer(enabled=self.config.audio.feedback_sounds)
-        self.commands = command_processor or CommandProcessor()
+        self.llm = llm or LLMClient(self.config.llm)
+        self.commands = command_processor or CommandProcessor(llm_edit=self._llm_edit)
         self.dictionary = PersonalDictionary(
             words=self.config.dictionary, replacements=self.config.replacements
         )
@@ -181,11 +185,20 @@ class FlowController:
         profile = match_profile(window, self.config.profiles)
         overrides = dict(profile.overrides) if profile else {}
 
+        llm_used = False
         if mode == "command":
             formatted = raw  # command instructions are used verbatim
         else:
             corrected = self.dictionary.correct(raw)
             formatted = format_transcript(corrected, self.config.formatting, overrides)
+            # AI cleanup pass (local LLM); rule-based text is the fallback.
+            if formatted and self.config.llm.enabled and self.config.llm.format_dictation:
+                tone = profile.tone if profile else "auto"
+                rewritten = self.llm.rewrite(formatted, tone=tone,
+                                             app=window.app or window.title)
+                if rewritten:
+                    formatted = rewritten
+                    llm_used = True
 
         injected = False
         if formatted and mode != "command":
@@ -210,6 +223,7 @@ class FlowController:
             duration=duration,
             mode=mode,
             elapsed=time.time() - t0,
+            llm_used=llm_used,
         )
         self.state.last_event = event
 
@@ -228,6 +242,12 @@ class FlowController:
             except Exception:
                 pass
         return event
+
+    def _llm_edit(self, instruction: str, text: str) -> Optional[str]:
+        """Command-mode hook: free-form edits via the local LLM."""
+        if not (self.config.llm.enabled and self.config.llm.command_mode):
+            return None
+        return self.llm.edit(instruction, text)
 
     def reset_session(self) -> None:
         """Forget session text (smart-join context)."""

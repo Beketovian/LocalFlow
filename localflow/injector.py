@@ -2,10 +2,14 @@
 
 Backends, in order of preference on each platform:
 
+* paste     - macOS: pbcopy + a synthesized Cmd+V (what Wispr Flow does;
+              per-character typing is unreliable in Messages, Slack, etc.)
 * type      - simulate keystrokes (pynput; xdotool on X11)
 * clipboard - copy to clipboard and press Ctrl/Cmd+V (fast for long text)
 * stdout    - print to stdout (piping into other tools, headless use)
 * callback  - hand the text to a Python callable (embedding/testing)
+
+"auto" picks paste on macOS, xdotool on X11, typing elsewhere.
 """
 
 from __future__ import annotations
@@ -116,13 +120,93 @@ class ClipboardInjector(Injector):
                 pass
 
 
+class MacPasteInjector(Injector):
+    """macOS: copy via pbcopy, paste via a synthesized Cmd+V.
+
+    Simulated per-character typing (pynput's CGEventKeyboardSetUnicodeString)
+    drops or garbles text in many apps - Messages, Slack, Electron apps -
+    and is slow for long dictations. Pasting is what Wispr Flow does and it
+    works everywhere. Cmd+V is posted through Quartz with the command flag
+    set explicitly, so a modifier still held from the hotkey can't corrupt it.
+    """
+
+    name = "paste"
+
+    def __init__(self, restore: bool = True) -> None:
+        if sys.platform != "darwin":
+            raise RuntimeError("MacPasteInjector is macOS-only")
+        if not shutil.which("pbcopy"):
+            raise RuntimeError("pbcopy not found")
+        self.restore = restore
+
+    @staticmethod
+    def _read_clipboard() -> Optional[str]:
+        try:
+            out = subprocess.run(["pbpaste"], capture_output=True, timeout=2)
+            return out.stdout.decode("utf-8", "replace")
+        except Exception:
+            return None
+
+    @staticmethod
+    def _write_clipboard(text: str) -> None:
+        subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True, timeout=2)
+
+    @staticmethod
+    def _press_cmd_v() -> None:
+        try:
+            import Quartz  # bundled with pynput's pyobjc dependency
+
+            src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+            v_key = 9  # kVK_ANSI_V
+            for down in (True, False):
+                event = Quartz.CGEventCreateKeyboardEvent(src, v_key, down)
+                Quartz.CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand)
+                Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+                time.sleep(0.01)
+            return
+        except Exception:
+            pass
+        # Fallbacks: pynput, then AppleScript.
+        try:
+            from pynput.keyboard import Controller, Key
+
+            kb = Controller()
+            with kb.pressed(Key.cmd):
+                kb.press("v")
+                kb.release("v")
+            return
+        except Exception:
+            pass
+        subprocess.run(
+            ["osascript", "-e",
+             'tell application "System Events" to keystroke "v" using command down'],
+            check=True, timeout=5,
+        )
+
+    def inject(self, text: str) -> None:
+        old = self._read_clipboard() if self.restore else None
+        self._write_clipboard(text)
+        time.sleep(0.05)  # let the pasteboard settle before the keystroke
+        self._press_cmd_v()
+        if self.restore and old is not None:
+            # Wait for the frontmost app to actually read the pasteboard;
+            # restoring too early makes it paste the *old* clipboard.
+            time.sleep(0.5)
+            try:
+                self._write_clipboard(old)
+            except Exception:
+                pass
+
+
 def create_injector(method: str = "auto", type_interval: float = 0.0,
                     restore_clipboard: bool = True) -> Injector:
     if method == "none":
         return CallbackInjector()
     if method == "stdout":
         return StdoutInjector()
-    if method == "clipboard":
+    if method in ("clipboard", "paste"):
+        if sys.platform == "darwin":
+            return MacPasteInjector(restore=restore_clipboard)
         return ClipboardInjector(restore=restore_clipboard)
     if method == "type":
         try:
@@ -130,6 +214,11 @@ def create_injector(method: str = "auto", type_interval: float = 0.0,
         except Exception:
             return XdotoolInjector()
     # auto
+    if sys.platform == "darwin":
+        try:
+            return MacPasteInjector(restore=restore_clipboard)
+        except Exception:
+            pass
     if sys.platform.startswith("linux") and shutil.which("xdotool"):
         try:
             return XdotoolInjector()
