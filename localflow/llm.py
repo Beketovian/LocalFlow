@@ -187,9 +187,12 @@ class LLMClient:
             "temperature": self.config.temperature,
             "stream": False,
         }
+        reasoning = bool(self._model and "gpt-oss" in self._model)
         if max_tokens:
-            payload["max_tokens"] = max_tokens
-        if self._model and "gpt-oss" in self._model:
+            # Reasoning tokens count against max_tokens on most servers -
+            # leave room so the cap can't truncate the actual answer.
+            payload["max_tokens"] = max_tokens + (384 if reasoning else 0)
+        if reasoning:
             # Don't let a reasoning model think at length about a comma.
             payload["reasoning_effort"] = "low"
         req = urllib.request.Request(
@@ -199,7 +202,12 @@ class LLMClient:
         )
         with urllib.request.urlopen(req, timeout=timeout or self.config.timeout) as resp:
             data = json.loads(resp.read())
-        return data["choices"][0]["message"]["content"] or ""
+        choice = data["choices"][0]
+        if choice.get("finish_reason") == "length":
+            # Ran into the token cap: the text is cut off mid-sentence and
+            # must not be pasted. Callers fall back to the rule-based text.
+            raise ValueError("llm response truncated")
+        return choice["message"]["content"] or ""
 
     def rewrite(self, text: str, tone: str = "auto", app: str = "") -> Optional[str]:
         """Clean up a dictation. Returns None when the LLM can't or shouldn't

@@ -18,6 +18,7 @@ class FakeLLMServer:
     def __init__(self, models=None, reply="cleaned text"):
         self.models = models or ["text-embedding-nomic", "google/gemma-4-26b-a4b"]
         self.reply = reply
+        self.finish_reason = "stop"
         self.requests = []
         outer = self
 
@@ -42,7 +43,10 @@ class FakeLLMServer:
                 payload = json.loads(self.rfile.read(length))
                 outer.requests.append(payload)
                 reply = outer.reply(payload) if callable(outer.reply) else outer.reply
-                self._send({"choices": [{"message": {"content": reply}}]})
+                self._send({"choices": [{
+                    "message": {"content": reply},
+                    "finish_reason": outer.finish_reason,
+                }]})
 
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.base_url = f"http://127.0.0.1:{self.httpd.server_address[1]}/v1"
@@ -135,6 +139,19 @@ class TestRewrite:
         client = client_for(fake_server, model="openai/gpt-oss-20b")
         client.rewrite("hello world um okay")
         assert fake_server.requests[0]["reasoning_effort"] == "low"
+
+    def test_gpt_oss_cap_has_reasoning_headroom(self, fake_server):
+        client = client_for(fake_server, model="openai/gpt-oss-20b")
+        client.rewrite("hello world um okay")
+        assert fake_server.requests[0]["max_tokens"] >= 96 + 384
+
+    def test_truncated_response_rejected(self, fake_server):
+        # finish_reason=length means the cap cut the text off mid-sentence;
+        # that must never be pasted.
+        fake_server.finish_reason = "length"
+        fake_server.reply = "Hey, can"
+        client = client_for(fake_server)
+        assert client.rewrite("hey can you send me that file real quick") is None
 
     def test_other_models_get_no_reasoning_param(self, fake_server):
         client = client_for(fake_server)  # auto -> gemma
