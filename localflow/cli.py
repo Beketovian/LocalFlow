@@ -86,6 +86,8 @@ def cmd_listen(args) -> int:
 
 
 def cmd_run(args) -> int:
+    import threading
+
     from .app import FlowController
     from .audio import MicrophoneRecorder, rms
     from .dashboard import DashboardServer
@@ -96,9 +98,14 @@ def cmd_run(args) -> int:
     config = _load_config(args)
 
     # The floating recording pill (Wispr Flow's on-screen widget). Feeds on
-    # live mic levels; silently unavailable on headless systems.
+    # live mic levels; silently unavailable on headless systems. On macOS,
+    # AppKit only allows windows on the main thread, so Tk is built here and
+    # run_forever() below owns the main loop.
     overlay = RecordingOverlay()
-    overlay_ok = overlay.start()
+    if overlay.needs_main_thread:
+        overlay_ok = overlay.init_main_thread()
+    else:
+        overlay_ok = overlay.start()
 
     def on_chunk(chunk) -> None:
         if overlay_ok:
@@ -195,27 +202,42 @@ def cmd_run(args) -> int:
           f" {config.hotkeys.toggle_dictation} toggles hands-free. Ctrl+C quits.")
 
     tray = None
-    try:
-        from .tray import TrayIcon
+    if sys.platform != "darwin":
+        # pystray's macOS backend is also main-thread-only, and the pill
+        # already owns the main thread there - tray is non-mac only.
+        try:
+            from .tray import TrayIcon
 
-        url = f"http://{config.dashboard.host}:{dashboard.port}" if dashboard else None
-        tray = TrayIcon(controller, dashboard_url=url)
-        tray.start()
-        controller.on_dictation(lambda e: tray.set_status("idle"))
-    except Exception:
-        pass  # headless or pystray missing - fine
+            url = f"http://{config.dashboard.host}:{dashboard.port}" if dashboard else None
+            tray = TrayIcon(controller, dashboard_url=url)
+            tray.start()
+            controller.on_dictation(lambda e: tray.set_status("idle"))
+        except Exception:
+            pass  # headless or pystray missing - fine
 
-    try:
-        while True:
+    stop_event = threading.Event()
+
+    def daemon_loop() -> None:
+        while not stop_event.is_set():
             if hands_free["on"] and controller.state.status == "idle":
                 event = controller.run_hands_free_once()
                 if event and args.verbose:
                     print(f"  > {event.formatted_text}")
             else:
                 time.sleep(0.15)
+
+    try:
+        if overlay_ok and overlay.needs_main_thread:
+            # macOS: pill runs the main thread, dictation work moves off it
+            worker = threading.Thread(target=daemon_loop, daemon=True)
+            worker.start()
+            overlay.run_forever()
+        else:
+            daemon_loop()
     except KeyboardInterrupt:
         print("\nbye")
     finally:
+        stop_event.set()
         listener.stop()
         if dashboard:
             dashboard.stop()

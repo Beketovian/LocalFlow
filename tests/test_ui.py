@@ -148,6 +148,31 @@ class TestOverlay:
         overlay = RecordingOverlay()
         assert overlay.start() is False  # no display -> graceful False
 
+    def test_start_refuses_background_thread_on_macos(self, monkeypatch):
+        # AppKit kills the process if a window is made off the main thread;
+        # threaded start() must refuse on darwin so callers take the
+        # init_main_thread()/run_forever() path instead.
+        import localflow.overlay as overlay_mod
+
+        monkeypatch.setattr(overlay_mod.sys, "platform", "darwin")
+        overlay = overlay_mod.RecordingOverlay()
+        assert overlay.needs_main_thread is True
+        assert overlay.start() is False
+        assert overlay._thread is None  # never spawned a Tk thread
+
+    def test_init_main_thread_without_display(self, monkeypatch):
+        pytest.importorskip("tkinter")
+        monkeypatch.delenv("DISPLAY", raising=False)
+        from localflow.overlay import RecordingOverlay
+
+        overlay = RecordingOverlay()
+        assert overlay.init_main_thread() is False
+
+    def test_run_forever_without_init_returns(self):
+        from localflow.overlay import RecordingOverlay
+
+        RecordingOverlay().run_forever()  # no root -> immediate no-op
+
     def test_level_clamped(self):
         from localflow.overlay import RecordingOverlay
 
