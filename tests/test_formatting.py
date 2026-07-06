@@ -79,6 +79,19 @@ class TestSpokenCommands:
         assert out.strip() in ("hello, world.", "hello , world .".replace(" ,", ","))
         assert "," in out and "." in out
 
+    def test_bullet_points(self):
+        out = apply_spoken_commands(
+            "bullet point apples, bullet point bananas, bullet point cherries"
+        )
+        assert out == "- apples\n- bananas\n- cherries"
+
+    def test_bullet_synonyms(self):
+        out = apply_spoken_commands("shopping. Bullet point milk new bullet eggs next bullet bread")
+        assert out.endswith("- milk\n- eggs\n- bread")
+
+    def test_leading_bullet_not_blank(self):
+        assert not apply_spoken_commands("bullet point first thing").startswith("\n")
+
 
 class TestNumbers:
     def test_two_word_number(self):

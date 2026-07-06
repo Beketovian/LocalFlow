@@ -139,6 +139,10 @@ _COMMANDS: Dict[str, str] = {
     "new paragraph": "\n\n",
     "next paragraph": "\n\n",
     "tab key": "\t",
+    # Lists: "bullet point apples, bullet point bananas" -> "- apples\n- bananas"
+    "bullet point": "\n- ",
+    "new bullet": "\n- ",
+    "next bullet": "\n- ",
 }
 
 # Spoken punctuation (opt-in; Whisper usually punctuates already)
@@ -184,10 +188,12 @@ def apply_spoken_commands(text: str) -> str:
         else:
             text = pattern.sub(repl, text)
     # Whisper sometimes capitalizes after our inserted newlines oddly; strip
-    # spaces around newlines introduced above.
+    # spaces around newlines introduced above ("- " markers are untouched:
+    # the dash sits right after the newline, so nothing strips inside them).
     text = re.sub(r"[ \t]*\n[ \t]*", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
-    return text
+    # A dictation that *starts* with "bullet point" shouldn't open blank.
+    return text.lstrip("\n")
 
 
 _PUNCT_RES = [(_phrase_re(k), v) for k, v in sorted(_PUNCTUATION_WORDS.items(), key=lambda kv: -len(kv[0]))]
