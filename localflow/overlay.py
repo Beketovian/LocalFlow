@@ -150,6 +150,9 @@ class RecordingOverlay:
         self._panel = None
         self._view = None
         self._quit = False
+        # Called every frame on the main (UI) thread; lets other AppKit UI
+        # (the menu bar item) update safely without its own runloop.
+        self._tick_callbacks: list = []
 
     # ------------------------------------------------------------ public API
 
@@ -222,6 +225,15 @@ class RecordingOverlay:
 
     def set_level(self, level: float) -> None:
         self._events.put(("level", max(0.0, min(1.0, float(level)))))
+
+    @property
+    def native(self) -> bool:
+        """True when the pill runs on the AppKit backend (macOS)."""
+        return self._panel is not None
+
+    def on_tick(self, callback) -> None:
+        """Register a per-frame main-thread callback (AppKit mode)."""
+        self._tick_callbacks.append(callback)
 
     def stop(self) -> None:
         self._events.put(("quit", None))
@@ -336,6 +348,11 @@ class RecordingOverlay:
                     quit_now = True
         except queue.Empty:
             pass
+        for callback in self._tick_callbacks:
+            try:
+                callback()
+            except Exception:
+                pass
         if not quit_now and self._status != "hidden":
             self._advance_state()
             self._view.setNeedsDisplay_(True)

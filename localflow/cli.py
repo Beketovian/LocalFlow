@@ -214,6 +214,18 @@ def cmd_run(args) -> int:
                   "formatting (run 'localflow llm download' for the built-in "
                   "model, or start LM Studio/Ollama)")
 
+    if sys.platform == "darwin" and os.environ.get("LOCALFLOW_APP"):
+        # Running as LocalFlow.app: use the system prompt that sends the
+        # user straight to Privacy & Security -> Accessibility on first run.
+        try:
+            import ApplicationServices as AppServices
+
+            AppServices.AXIsProcessTrustedWithOptions(
+                {AppServices.kAXTrustedCheckOptionPrompt: True}
+            )
+        except Exception:
+            pass
+
     dashboard = None
     if config.dashboard.enabled:
         try:
@@ -267,10 +279,14 @@ def cmd_run(args) -> int:
         if event and args.verbose:
             print(f"  > {event.formatted_text}{_timing(event)}")
 
+    menubar = {"bar": None}  # filled in below (macOS AppKit mode only)
+
     def toggle() -> None:
         hands_free["on"] = not hands_free["on"]
         controller.state.hands_free = hands_free["on"]
         print("hands-free:", "ON" if hands_free["on"] else "OFF")
+        if menubar["bar"]:
+            menubar["bar"].set_hands_free(hands_free["on"])
 
     def command_mode() -> None:
         # First press: start recording the spoken instruction. Second press:
@@ -308,8 +324,34 @@ def cmd_run(args) -> int:
           f" {config.hotkeys.toggle_dictation} toggles hands-free. Ctrl+C quits.")
     _warn_if_macos_untrusted()
 
+    stop_event = threading.Event()
+
     tray = None
-    if sys.platform != "darwin":
+    if sys.platform == "darwin" and overlay_ok and overlay.native:
+        # Native menu bar item riding the pill's AppKit runloop: status
+        # glyph, dashboard link, hands-free toggle, quit. This is the app's
+        # visible identity when launched as LocalFlow.app (no terminal).
+        try:
+            from .menubar import MacMenuBar
+
+            url = f"http://{config.dashboard.host}:{dashboard.port}" if dashboard else None
+
+            def quit_app() -> None:
+                stop_event.set()
+                overlay.stop()  # ends run_forever -> cmd_run's finally
+
+            bar = MacMenuBar(
+                version=__version__,
+                dashboard_url=url,
+                on_quit=quit_app,
+                on_toggle_hands_free=lambda: actions.put(toggle),
+            )
+            bar.attach(overlay)
+            controller.on_status(bar.set_status)
+            menubar["bar"] = bar
+        except Exception:
+            pass  # no menu bar; dictation still works
+    elif sys.platform != "darwin":
         # pystray's macOS backend is also main-thread-only, and the pill
         # already owns the main thread there - tray is non-mac only.
         try:
@@ -321,8 +363,6 @@ def cmd_run(args) -> int:
             controller.on_dictation(lambda e: tray.set_status("idle"))
         except Exception:
             pass  # headless or pystray missing - fine
-
-    stop_event = threading.Event()
 
     if config.llm.enabled:
         # LM Studio JIT-unloads idle models; the next dictation would then
@@ -361,6 +401,8 @@ def cmd_run(args) -> int:
             dashboard.stop()
         if tray:
             tray.stop()
+        if menubar["bar"]:
+            menubar["bar"].remove()
         if overlay_ok:
             overlay.stop()
         controller.close()

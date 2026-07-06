@@ -50,7 +50,29 @@ Platform notes:
 * **macOS**: grant Accessibility + Microphone permissions to your terminal (System Settings → Privacy & Security). Text is inserted by pasting (pbcopy + a synthesized ⌘V, like Wispr Flow) — simulated typing is unreliable in Messages/Slack/Electron apps.
 * **Windows**: works out of the box with `pip install`.
 
-## Usage
+## Run as an app (macOS)
+
+One double-clickable menu-bar app - no terminal, no LM Studio:
+
+```bash
+./scripts/build_app.sh --install    # builds dist/LocalFlow.app, copies to /Applications
+open /Applications/LocalFlow.app
+```
+
+* Menu bar icon shows status (◎ idle / ◉ recording / ◌ formatting) with
+  Open Dashboard, Hands-free Mode and Quit.
+* The AI-formatting model runs **in-process** (Apple MLX). If LM Studio or
+  Ollama happens to be running, LocalFlow uses that server instead; close it
+  and the built-in engine takes over automatically. No weights yet?
+  `localflow llm download` fetches the default model (~2.3 GB, one time).
+* First launch: grant **Microphone**, **Accessibility** and **Input
+  Monitoring** to LocalFlow when macOS asks (it's a new app identity).
+* Logs: `~/Library/Logs/LocalFlow.log`. Start at login: System Settings →
+  General → Login Items → add LocalFlow.
+* The app launches the daemon from this repo's `venv` - rebuild after moving
+  the repo.
+
+## Usage (terminal)
 
 ```bash
 localflow run
