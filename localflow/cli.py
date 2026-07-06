@@ -85,6 +85,31 @@ def cmd_listen(args) -> int:
     return 0
 
 
+def _warn_if_macos_untrusted() -> None:
+    """On macOS, hotkeys and typing need Accessibility trust - say so clearly."""
+    if sys.platform != "darwin":
+        return
+    try:
+        import ctypes
+        import ctypes.util
+
+        lib = ctypes.util.find_library("ApplicationServices")
+        appsvc = ctypes.cdll.LoadLibrary(lib)
+        trusted = bool(appsvc.AXIsProcessTrusted())
+    except Exception:
+        return
+    if not trusted:
+        print(
+            "\n  ⚠ macOS hasn't granted this process input-monitoring trust yet,\n"
+            "    so the hotkeys and text insertion will NOT work until you:\n"
+            "      1. Open System Settings → Privacy & Security → Accessibility\n"
+            "         and add/enable your terminal app (and the venv's python if listed).\n"
+            "      2. Do the same under Privacy & Security → Input Monitoring.\n"
+            "      3. Fully quit and reopen the terminal, then run 'localflow run' again.\n"
+            "    Also click Allow when macOS asks for Microphone access.\n"
+        )
+
+
 def cmd_run(args) -> int:
     import threading
 
@@ -206,6 +231,7 @@ def cmd_run(args) -> int:
     listener.start()
     print(f"  hold {config.hotkeys.push_to_talk} to dictate;"
           f" {config.hotkeys.toggle_dictation} toggles hands-free. Ctrl+C quits.")
+    _warn_if_macos_untrusted()
 
     tray = None
     if sys.platform != "darwin":
@@ -417,6 +443,7 @@ def cmd_doctor(args) -> int:
         print("input devices:", ", ".join(devices[:5]) or "none found")
     except Exception as exc:
         print(f"input devices: unavailable ({type(exc).__name__})")
+    _warn_if_macos_untrusted()
     return 0
 
 
