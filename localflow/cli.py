@@ -362,8 +362,9 @@ def cmd_run(args) -> int:
             bar.attach(overlay)
             controller.on_status(bar.set_status)
             menubar["bar"] = bar
-        except Exception:
-            pass  # no menu bar; dictation still works
+            print("  menu bar: ◎ icon active (top-right, near the clock)")
+        except Exception as exc:
+            print(f"  menu bar: unavailable ({exc!r}); dictation still works")
     elif sys.platform != "darwin":
         # pystray's macOS backend is also main-thread-only, and the pill
         # already owns the main thread there - tray is non-mac only.
