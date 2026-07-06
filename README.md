@@ -110,7 +110,7 @@ The suite includes true end-to-end tests: speech is synthesized with `espeak-ng`
 
 ## Limitations vs. Wispr Flow
 
-* The LLM cleanup pass adds latency proportional to your model's speed (a few seconds on Apple Silicon with a mid-size model). Turn it off in Settings → AI formatting, or pick a smaller/faster model, if you'd rather have instant rule-based-only insertion.
+* The LLM cleanup pass adds latency proportional to your model's speed. A small instruct model is all this task needs — **Qwen3-4B-Instruct-2507 (MLX 4-bit) does a full cleanup in ~0.4s on Apple Silicon** and was the best of the models we benchmarked (gpt-oss-20b: same quality, ~1.4s; Gemma-4-E4B: disqualified — it force-thinks ~90 tokens before every answer and the thinking can't be disabled over the API; big MoE models: slow and RAM-hungry). Avoid "thinking" models here generally. Turn the pass off in Settings → AI formatting for instant rule-based-only insertion.
 * "Streaming" preview re-transcribes the buffer periodically; Whisper isn't natively streaming.
 * Wayland restricts global hotkeys and synthetic typing; X11/macOS/Windows are the happy paths.
 
