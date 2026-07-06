@@ -206,7 +206,8 @@ class FlowController:
                 tone = profile.tone if profile else "auto"
                 t_llm = time.time()
                 rewritten = self.llm.rewrite(formatted, tone=tone,
-                                             app=window.app or window.title)
+                                             app=window.app or window.title,
+                                             dictionary=self.dictionary.words)
                 llm_seconds = time.time() - t_llm
                 if rewritten:
                     formatted = rewritten

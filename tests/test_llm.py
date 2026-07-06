@@ -109,6 +109,12 @@ class TestRewrite:
         assert "Messages" in sent["messages"][0]["content"]
         assert sent["messages"][1]["content"] == "hey there"  # dictation only
 
+    def test_dictionary_terms_in_prompt(self, fake_server):
+        client = client_for(fake_server)
+        client.rewrite("talked to LangChain about Beketov", dictionary=["Beketov", "LangChain"])
+        system = fake_server.requests[0]["messages"][0]["content"]
+        assert "Beketov" in system and "LangChain" in system
+
     def test_rejects_runaway_output(self, fake_server):
         fake_server.reply = "way too long " * 100
         client = client_for(fake_server)

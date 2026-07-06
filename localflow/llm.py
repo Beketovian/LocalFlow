@@ -209,7 +209,8 @@ class LLMClient:
             raise ValueError("llm response truncated")
         return choice["message"]["content"] or ""
 
-    def rewrite(self, text: str, tone: str = "auto", app: str = "") -> Optional[str]:
+    def rewrite(self, text: str, tone: str = "auto", app: str = "",
+                dictionary: Optional[List[str]] = None) -> Optional[str]:
         """Clean up a dictation. Returns None when the LLM can't or shouldn't
         be used (server down, timeout, implausible output)."""
         text = text.strip()
@@ -217,9 +218,16 @@ class LLMClient:
             return None
         if not (self.config.min_chars <= len(text) <= self.config.max_chars):
             return None  # too short to be worth the latency, or too long
+        app_line = f"\nThe text is being dictated into: {app}." if app else ""
+        if dictionary:
+            # The user's personal dictionary (names, jargon): the model must
+            # not "fix" these into common words.
+            terms = ", ".join(dictionary[:60])
+            app_line += ("\nPreserve these user-specific terms exactly as "
+                         f"written (never respell them): {terms}.")
         system = _REWRITE_SYSTEM.format(
             tone=_TONE_HINTS.get(tone, _TONE_HINTS["auto"]),
-            app_line=f"\nThe text is being dictated into: {app}." if app else "",
+            app_line=app_line,
         )
         try:
             out = _sanitize(self._chat(
