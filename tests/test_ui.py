@@ -124,6 +124,18 @@ class TestDashboardUI:
         assert cfg["formatting"]["remove_fillers"] is True
         assert "not_a_section" not in cfg or cfg.get("not_a_section") is None
 
+    def test_busy_port_falls_back_to_ephemeral(self):
+        # a second server on the same port must come up anyway
+        other = DashboardServer(make_controller(), port=self.port)
+        try:
+            port2 = other.start()
+            assert port2 != self.port
+            with urllib.request.urlopen(f"http://127.0.0.1:{port2}/api/state",
+                                        timeout=5) as resp:
+                assert resp.status == 200
+        finally:
+            other.stop()
+
     def test_settings_persisted_via_save(self, tmp_path, monkeypatch):
         saved = []
         monkeypatch.setattr(self.controller.config, "save",

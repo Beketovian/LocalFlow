@@ -223,7 +223,12 @@ class DashboardServer:
                                     or (isinstance(current, float) and isinstance(sub_value, (int, float))):
                                 setattr(section, sub_key, sub_value)
 
-        self._httpd = ThreadingHTTPServer((self.host, self.port), Handler)
+        try:
+            self._httpd = ThreadingHTTPServer((self.host, self.port), Handler)
+        except OSError:
+            # Configured port taken (another LocalFlow instance, or some other
+            # app) - fall back to an ephemeral port instead of dying.
+            self._httpd = ThreadingHTTPServer((self.host, 0), Handler)
         self.port = self._httpd.server_address[1]  # resolves port 0
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
         self._thread.start()

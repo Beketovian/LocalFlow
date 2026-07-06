@@ -142,9 +142,15 @@ def cmd_run(args) -> int:
 
     dashboard = None
     if config.dashboard.enabled:
-        dashboard = DashboardServer(controller, config.dashboard.host, config.dashboard.port)
-        port = dashboard.start()
-        print(f"  dashboard: http://{config.dashboard.host}:{port}")
+        try:
+            dashboard = DashboardServer(controller, config.dashboard.host, config.dashboard.port)
+            port = dashboard.start()
+            note = "" if port == config.dashboard.port else \
+                f"  (port {config.dashboard.port} was busy)"
+            print(f"  dashboard: http://{config.dashboard.host}:{port}{note}")
+        except OSError as exc:
+            dashboard = None
+            print(f"  dashboard: unavailable ({exc}); dictation still works")
 
     # warm the model up front so the first dictation is snappy
     print("  loading model...", end=" ", flush=True)
@@ -262,7 +268,8 @@ def cmd_ui(args) -> int:
     server = DashboardServer(controller, config.dashboard.host, config.dashboard.port)
     port = server.start()
     url = f"http://{config.dashboard.host}:{port}"
-    print(f"LocalFlow dashboard: {url}  (Ctrl+C to quit)")
+    note = "" if port == config.dashboard.port else f"  (port {config.dashboard.port} was busy)"
+    print(f"LocalFlow dashboard: {url}  (Ctrl+C to quit){note}")
     if not getattr(args, "no_browser", False):
         webbrowser.open(url)
     try:
