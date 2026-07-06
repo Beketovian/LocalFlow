@@ -42,6 +42,8 @@ class DictationEvent:
     mode: str = "dictation"
     elapsed: float = 0.0
     llm_used: bool = False
+    stt_seconds: float = 0.0
+    llm_seconds: float = 0.0
 
 
 @dataclass
@@ -176,11 +178,13 @@ class FlowController:
             audio = normalize_rms(audio, target_rms=self.config.audio.target_rms)
 
         language = self.config.engine.language
+        t_stt = time.time()
         result = self.engine.transcribe(
             audio,
             language=None if language == "auto" else language,
             initial_prompt=self.dictionary.initial_prompt(),
         )
+        stt_seconds = time.time() - t_stt
         raw = result.clean_text
 
         window = self._active_window
@@ -188,6 +192,7 @@ class FlowController:
         overrides = dict(profile.overrides) if profile else {}
 
         llm_used = False
+        llm_seconds = 0.0
         if mode == "command":
             formatted = raw  # command instructions are used verbatim
         else:
@@ -196,8 +201,10 @@ class FlowController:
             # AI cleanup pass (local LLM); rule-based text is the fallback.
             if formatted and self.config.llm.enabled and self.config.llm.format_dictation:
                 tone = profile.tone if profile else "auto"
+                t_llm = time.time()
                 rewritten = self.llm.rewrite(formatted, tone=tone,
                                              app=window.app or window.title)
+                llm_seconds = time.time() - t_llm
                 if rewritten:
                     formatted = rewritten
                     llm_used = True
@@ -230,6 +237,8 @@ class FlowController:
             mode=mode,
             elapsed=time.time() - t0,
             llm_used=llm_used,
+            stt_seconds=stt_seconds,
+            llm_seconds=llm_seconds,
         )
         self.state.last_event = event
 

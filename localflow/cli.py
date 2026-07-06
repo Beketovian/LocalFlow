@@ -197,10 +197,17 @@ def cmd_run(args) -> int:
     def ptt_press() -> None:
         controller.start_recording()
 
+    def _timing(event) -> str:
+        parts = [f"stt {event.stt_seconds:.2f}s"]
+        if event.llm_seconds:
+            parts.append(f"llm {event.llm_seconds:.2f}s"
+                         + ("" if event.llm_used else " (fallback)"))
+        return f" [{', '.join(parts)}]"
+
     def ptt_release() -> None:
         event = controller.stop_recording()
         if event and args.verbose:
-            print(f"  > {event.formatted_text}")
+            print(f"  > {event.formatted_text}{_timing(event)}")
 
     def toggle() -> None:
         hands_free["on"] = not hands_free["on"]
@@ -264,7 +271,7 @@ def cmd_run(args) -> int:
             if hands_free["on"] and controller.state.status == "idle":
                 event = controller.run_hands_free_once()
                 if event and args.verbose:
-                    print(f"  > {event.formatted_text}")
+                    print(f"  > {event.formatted_text}{_timing(event)}")
             else:
                 time.sleep(0.15)
 

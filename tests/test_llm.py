@@ -62,6 +62,7 @@ def fake_server():
 
 
 def client_for(server, **overrides) -> LLMClient:
+    overrides.setdefault("min_chars", 0)  # tests use short inputs
     cfg = LLMConfig(base_url=server.base_url, timeout=5.0, **overrides)
     return LLMClient(cfg)
 
@@ -119,6 +120,27 @@ class TestRewrite:
         assert client.rewrite("x" * 50) is None
         assert fake_server.requests == []
 
+    def test_skips_tiny_input(self, fake_server):
+        # "sounds good" isn't worth a model round-trip; rules handle it
+        client = client_for(fake_server, min_chars=15)
+        assert client.rewrite("sounds good") is None
+        assert fake_server.requests == []
+
+    def test_output_capped(self, fake_server):
+        client = client_for(fake_server)
+        client.rewrite("hello world um okay")
+        assert fake_server.requests[0]["max_tokens"] >= 96
+
+    def test_gpt_oss_gets_low_reasoning_effort(self, fake_server):
+        client = client_for(fake_server, model="openai/gpt-oss-20b")
+        client.rewrite("hello world um okay")
+        assert fake_server.requests[0]["reasoning_effort"] == "low"
+
+    def test_other_models_get_no_reasoning_param(self, fake_server):
+        client = client_for(fake_server)  # auto -> gemma
+        client.rewrite("hello world um okay")
+        assert "reasoning_effort" not in fake_server.requests[0]
+
 
 class TestEdit:
     def test_edit(self, fake_server):
@@ -155,6 +177,7 @@ class TestControllerIntegration:
         config.save_history = False
         config.llm.base_url = server.base_url if server else "http://127.0.0.1:9/v1"
         config.llm.timeout = 5.0
+        config.llm.min_chars = 0  # tests use short inputs
         for key, value in llm_overrides.items():
             setattr(config.llm, key, value)
         injector = CallbackInjector()

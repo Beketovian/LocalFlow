@@ -112,7 +112,10 @@ class LLMConfig:
     # Give up and use the rule-based text if the LLM takes longer than this
     timeout: float = 10.0
     temperature: float = 0.2
-    # Skip the LLM for very long transcripts (latency)
+    # Skip the LLM outside this length range: very short dictations ("sounds
+    # good") gain nothing from a model round-trip, and very long ones would
+    # take too long. The rule engine still formats skipped text.
+    min_chars: int = 15
     max_chars: int = 6000
     # Rewrite dictations (grammar, fillers, self-corrections)
     format_dictation: bool = True

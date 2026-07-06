@@ -44,6 +44,9 @@ recognizer wrote it down. Your job:
 - Fix transcription artifacts: punctuation, capitalization, obvious mishearings.
 - Remove filler words (um, uh, you know, like) and false starts.
 - Apply self-corrections: "at five, no wait, six" becomes "at six".
+- When the speaker asks for structure, apply it: "bullet points A B C" or \
+"new bullet" becomes a markdown list ("- A"), "numbered list" / "step one, \
+step two" becomes "1. ... 2. ...", "new paragraph" becomes a paragraph break.
 - Keep the speaker's words, meaning, tone and language. Do NOT rephrase, \
 summarize, expand, answer questions in the text, or add anything new.
 - Preserve line breaks the speaker asked for.
@@ -186,6 +189,9 @@ class LLMClient:
         }
         if max_tokens:
             payload["max_tokens"] = max_tokens
+        if self._model and "gpt-oss" in self._model:
+            # Don't let a reasoning model think at length about a comma.
+            payload["reasoning_effort"] = "low"
         req = urllib.request.Request(
             self._base_url + "/chat/completions",
             data=json.dumps(payload).encode(),
@@ -201,17 +207,22 @@ class LLMClient:
         text = text.strip()
         if not text or not self.probe():
             return None
-        if len(text) > self.config.max_chars:
-            return None
+        if not (self.config.min_chars <= len(text) <= self.config.max_chars):
+            return None  # too short to be worth the latency, or too long
         system = _REWRITE_SYSTEM.format(
             tone=_TONE_HINTS.get(tone, _TONE_HINTS["auto"]),
             app_line=f"\nThe text is being dictated into: {app}." if app else "",
         )
         try:
-            out = _sanitize(self._chat([
-                {"role": "system", "content": system},
-                {"role": "user", "content": text},
-            ]))
+            out = _sanitize(self._chat(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": text},
+                ],
+                # Cleanup output ≈ input length; cap it so a model can never
+                # ramble for seconds (~3 chars/token, 2x headroom + floor).
+                max_tokens=max(96, (2 * len(text)) // 3),
+            ))
         except Exception:
             return None
         # Reject responses that clearly did more than clean up.
