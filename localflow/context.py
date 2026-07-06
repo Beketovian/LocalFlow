@@ -21,6 +21,7 @@ from .config import AppProfile
 class WindowInfo:
     title: str = ""
     app: str = ""
+    pid: int = 0  # macOS: lets the injector re-focus the target app
 
     @property
     def haystack(self) -> str:
@@ -56,6 +57,19 @@ class ActiveWindowProvider:
         return WindowInfo()
 
     def _macos(self) -> WindowInfo:
+        # NSWorkspace is fast (~1ms) and needs no Automation permission;
+        # osascript is the fallback where pyobjc is missing.
+        try:
+            from AppKit import NSWorkspace
+
+            front = NSWorkspace.sharedWorkspace().frontmostApplication()
+            if front is not None:
+                return WindowInfo(
+                    app=str(front.localizedName() or ""),
+                    pid=int(front.processIdentifier()),
+                )
+        except Exception:
+            pass
         script = (
             'tell application "System Events" to get name of first application '
             "process whose frontmost is true"

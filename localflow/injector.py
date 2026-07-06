@@ -138,6 +138,10 @@ class MacPasteInjector(Injector):
         if not shutil.which("pbcopy"):
             raise RuntimeError("pbcopy not found")
         self.restore = restore
+        # Set by the controller before inject(): pid of the app the user was
+        # dictating into. If focus drifted (e.g. to our own recording pill),
+        # inject() re-activates it so the paste lands in the right place.
+        self.focus_pid = 0
 
     @staticmethod
     def _read_clipboard() -> Optional[str]:
@@ -183,7 +187,36 @@ class MacPasteInjector(Injector):
             check=True, timeout=5,
         )
 
+    def _ensure_target_focus(self) -> None:
+        if not self.focus_pid:
+            return
+        try:
+            from AppKit import (
+                NSApplicationActivateIgnoringOtherApps,
+                NSRunningApplication,
+                NSWorkspace,
+            )
+
+            workspace = NSWorkspace.sharedWorkspace()
+            front = workspace.frontmostApplication()
+            if front is not None and int(front.processIdentifier()) == self.focus_pid:
+                return
+            target = NSRunningApplication.runningApplicationWithProcessIdentifier_(
+                self.focus_pid
+            )
+            if target is None:
+                return
+            target.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+            for _ in range(20):  # wait up to ~1s for the switch to land
+                time.sleep(0.05)
+                front = workspace.frontmostApplication()
+                if front is not None and int(front.processIdentifier()) == self.focus_pid:
+                    break
+        except Exception:
+            pass  # best effort - paste still goes to whatever is frontmost
+
     def inject(self, text: str) -> None:
+        self._ensure_target_focus()
         old = self._read_clipboard() if self.restore else None
         self._write_clipboard(text)
         time.sleep(0.05)  # let the pasteboard settle before the keystroke

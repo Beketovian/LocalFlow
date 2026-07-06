@@ -1,6 +1,7 @@
 """Tests for the dashboard UI, settings API, status events and the overlay."""
 
 import json
+import sys
 import urllib.request
 
 import numpy as np
@@ -172,6 +173,10 @@ class TestOverlay:
         assert overlay.start() is False
         assert overlay._thread is None  # never spawned a Tk thread
 
+    @pytest.mark.skipif(
+        sys.platform == "darwin",
+        reason="macOS uses AppKit (no DISPLAY) and always has a window server",
+    )
     def test_init_main_thread_without_display(self, monkeypatch):
         pytest.importorskip("tkinter")
         monkeypatch.delenv("DISPLAY", raising=False)

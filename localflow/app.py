@@ -126,10 +126,12 @@ class FlowController:
         with self._lock:
             if self.state.status != "idle":
                 return False
+            # Capture the focused window before anything reacts to the status
+            # change: showing the recording pill can shift focus to our own
+            # process, and the paste must target the app the user was in.
+            self._active_window = self.window_provider.get()
             self._set_status("recording")
             self.state.mode = mode
-        # capture the focused window *before* the user switches attention
-        self._active_window = self.window_provider.get()
         self._record_started_at = time.time()
         self.recorder.start()
         self.sounds.start()
@@ -201,6 +203,10 @@ class FlowController:
                     llm_used = True
 
         injected = False
+        if hasattr(self.injector, "focus_pid"):
+            # macOS paste: re-activate the app the user was dictating into in
+            # case focus moved (e.g. to our own recording pill) meanwhile.
+            self.injector.focus_pid = window.pid
         if formatted and mode != "command":
             text_out = smart_join(self.state.session_text, formatted)
             if self.config.output.trailing_space and not text_out.endswith(("\n", " ")):
@@ -291,6 +297,8 @@ class FlowController:
         if edited is None:
             self.sounds.error()
             return None
+        if hasattr(self.injector, "focus_pid"):
+            self.injector.focus_pid = self._active_window.pid
         try:
             self.injector.inject(edited)
         except Exception:
