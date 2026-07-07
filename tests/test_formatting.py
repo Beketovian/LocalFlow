@@ -172,3 +172,35 @@ class TestSmartJoin:
 
     def test_empty_previous(self):
         assert smart_join("", "Hello") == "Hello"
+
+
+class TestVoiceSend:
+    def test_trailing_send_it(self):
+        from localflow.formatting import detect_send_command
+
+        text, send = detect_send_command("okay see you at six, send it")
+        assert send is True
+        assert text == "okay see you at six"
+
+    def test_send_variants(self):
+        from localflow.formatting import detect_send_command
+
+        for phrase in ("Send it.", "send that", "and send the message",
+                       "then send now", "send this!"):
+            text, send = detect_send_command(f"on my way {phrase}")
+            assert send is True, phrase
+            assert text == "on my way", phrase
+
+    def test_mentioning_send_is_safe(self):
+        from localflow.formatting import detect_send_command
+
+        for safe in ("what did he send", "I will send it tomorrow morning",
+                      "did you send it to me yet"):
+            _, send = detect_send_command(safe)
+            assert send is False, safe
+
+    def test_standalone_send_it(self):
+        from localflow.formatting import detect_send_command
+
+        text, send = detect_send_command("Send it.")
+        assert send is True and text == ""

@@ -23,6 +23,7 @@ class StreamingPreview:
         interval: float = 1.5,
         language: Optional[str] = None,
         initial_prompt: Optional[str] = None,
+        lock: Optional[threading.Lock] = None,
     ) -> None:
         self.engine = engine
         self.recorder = recorder
@@ -30,6 +31,9 @@ class StreamingPreview:
         self.interval = interval
         self.language = language
         self.initial_prompt = initial_prompt
+        # Shared with the final-pass transcription: whisper models are not
+        # safe under concurrent transcribe calls.
+        self.lock = lock or threading.Lock()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.last_partial: str = ""
@@ -51,9 +55,13 @@ class StreamingPreview:
             if audio.size < 8000:  # <0.5s - nothing useful yet
                 continue
             try:
-                result = self.engine.transcribe(
-                    audio, language=self.language, initial_prompt=self.initial_prompt
-                )
+                with self.lock:
+                    if self._stop.is_set():
+                        return
+                    result = self.engine.transcribe(
+                        audio, language=self.language,
+                        initial_prompt=self.initial_prompt,
+                    )
             except Exception:
                 continue
             text = result.clean_text

@@ -99,3 +99,50 @@ class PersonalDictionary:
             pattern = re.compile(rf"\b{re.escape(spoken)}\b", re.IGNORECASE)
             text = pattern.sub(written, text)
         return text
+
+
+# --------------------------------------------------------- auto-learning
+
+# Capitalized words that are ordinary English, not names/jargon worth
+# learning. Kept small: false negatives are cheap (the user just doesn't get
+# a suggestion), false positives are noisy.
+_COMMON_CAPITALIZED = frozenset("""
+i i'm i'll i've i'd ok okay monday tuesday wednesday thursday friday
+saturday sunday january february march april may june july august september
+october november december god internet english american february
+mr mrs ms dr also and but the this that when where how why what
+""".split())
+
+
+def mine_suggestions(
+    texts: Iterable[str],
+    known: Iterable[str],
+    min_count: int = 3,
+    limit: int = 8,
+) -> List[tuple]:
+    """Find recurring proper nouns/jargon in past dictations.
+
+    Wispr Flow's auto-learning: words that keep appearing capitalized
+    mid-sentence are probably names or jargon the user says often - exactly
+    what belongs in the dictionary. Returns [(word, count)], most frequent
+    first.
+    """
+    counts: Dict[str, int] = {}
+    for text in texts:
+        for sentence in re.split(r"[.!?\n]+", text or ""):
+            tokens = re.findall(r"[A-Za-z][A-Za-z0-9'’-]{2,}", sentence)
+            for i, token in enumerate(tokens):
+                if i == 0:
+                    continue  # sentence-initial capitalization is grammar
+                if not token[0].isupper():
+                    continue
+                if token.lower() in _COMMON_CAPITALIZED:
+                    continue
+                counts[token] = counts.get(token, 0) + 1
+    known_lower = {k.lower() for k in known}
+    ranked = sorted(
+        ((w, c) for w, c in counts.items()
+         if c >= min_count and w.lower() not in known_lower),
+        key=lambda item: (-item[1], item[0]),
+    )
+    return ranked[:limit]

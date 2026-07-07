@@ -46,3 +46,27 @@ class TestDictionary:
     def test_correct_applies_replacements_too(self):
         d = PersonalDictionary(words=["Slack"], replacements={"omw": "on my way"})
         assert d.correct("omw to slack") == "on my way to Slack"
+
+
+class TestSuggestions:
+    def test_mines_recurring_names(self):
+        from localflow.dictionary import mine_suggestions
+
+        texts = [
+            "I talked to Beketov about LangChain today.",
+            "Beketov said the LangChain docs are rough.",
+            "Later Beketov pinged me again about LangChain.",
+        ]
+        out = dict(mine_suggestions(texts, known=[], min_count=2))
+        assert out["LangChain"] == 3
+        assert out["Beketov"] == 2  # one occurrence is sentence-initial
+
+    def test_known_words_and_common_words_excluded(self):
+        from localflow.dictionary import mine_suggestions
+
+        texts = ["See you Monday with Anthropic.",
+                 "Talked to Anthropic on Monday.",
+                 "Anthropic again, this Monday."]
+        out = dict(mine_suggestions(texts, known=["Anthropic"], min_count=2))
+        assert "Anthropic" not in out
+        assert "Monday" not in out

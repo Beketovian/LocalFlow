@@ -52,6 +52,7 @@ from typing import Optional
 # Visual constants tuned to match Wispr Flow's pill
 _PILL_W = 220
 _PILL_H = 44
+_PILL_W_TEXT = 480  # width while showing the live transcript
 _MARGIN_BOTTOM = 48
 _BG = "#16161A"          # near-black capsule
 _BAR_COLOR = "#FFFFFF"   # waveform bars
@@ -71,7 +72,16 @@ def _pill_view_class():
     if _PILL_VIEW_CLASS is not None:
         return _PILL_VIEW_CLASS
 
-    from AppKit import NSBezierPath, NSColor, NSMakeRect, NSView
+    from AppKit import (
+        NSBezierPath,
+        NSColor,
+        NSFont,
+        NSFontAttributeName,
+        NSForegroundColorAttributeName,
+        NSGraphicsContext,
+        NSMakeRect,
+        NSView,
+    )
 
     def _rgb(spec: str, alpha: float = 1.0):
         r, g, b = (int(spec[i:i + 2], 16) / 255.0 for i in (1, 3, 5))
@@ -101,6 +111,9 @@ def _pill_view_class():
                 NSBezierPath.bezierPathWithOvalInRect_(
                     NSMakeRect(14, h / 2 - 4, 8, 8)
                 ).fill()
+                if overlay._partial:
+                    self._draw_partial(overlay._partial, w, h)
+                    return
                 span = w - 44 - 16
                 step = span / _N_BARS
                 for i, level in enumerate(overlay._bars):
@@ -110,6 +123,7 @@ def _pill_view_class():
                     NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
                         NSMakeRect(bx - 1.4, h / 2 - bh / 2, 2.8, bh), 1.4, 1.4
                     ).fill()
+
             elif overlay._status == "processing":
                 for i in range(3):
                     pulse = 0.5 + 0.5 * math.sin(overlay._phase * 6.0 - i * 0.9)
@@ -122,6 +136,27 @@ def _pill_view_class():
                     NSBezierPath.bezierPathWithOvalInRect_(
                         NSMakeRect(cx - radius, h / 2 - radius, radius * 2, radius * 2)
                     ).fill()
+
+        def _draw_partial(self, text: str, w: float, h: float) -> None:
+            """Live transcript: single line, tail-anchored (newest words
+            always visible), clipped inside the capsule."""
+            from Foundation import NSString
+
+            text = NSString.stringWithString_(text.replace("\n", " "))
+            attrs = {
+                NSFontAttributeName: NSFont.systemFontOfSize_(13),
+                NSForegroundColorAttributeName: _rgb("#FFFFFF", 0.92),
+            }
+            left, right = 34.0, 18.0
+            avail = w - left - right
+            size = text.sizeWithAttributes_(attrs)
+            x = left if size.width <= avail else left - (size.width - avail)
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath.bezierPathWithRect_(
+                NSMakeRect(left, 0, avail, h)).addClip()
+            text.drawAtPoint_withAttributes_(
+                (x, h / 2 - size.height / 2), attrs)
+            NSGraphicsContext.restoreGraphicsState()
 
     _PILL_VIEW_CLASS = _PillView
     return _PillView
@@ -146,6 +181,7 @@ class RecordingOverlay:
         self._smooth = 0.0
         self._bars = [0.08] * _N_BARS
         self._phase = 0.0
+        self._partial = ""  # live transcript while recording
         # macOS AppKit backend
         self._panel = None
         self._view = None
@@ -225,6 +261,10 @@ class RecordingOverlay:
 
     def set_level(self, level: float) -> None:
         self._events.put(("level", max(0.0, min(1.0, float(level)))))
+
+    def set_partial(self, text: str) -> None:
+        """Live transcript preview shown inside the pill (AppKit backend)."""
+        self._events.put(("partial", text))
 
     @property
     def native(self) -> bool:
@@ -344,6 +384,16 @@ class RecordingOverlay:
             except Exception:
                 pass
 
+    def _appkit_set_width(self, width: float) -> None:
+        from Foundation import NSMakeRect
+
+        frame = self._panel.frame()
+        if abs(frame.size.width - width) < 1:
+            return
+        x = frame.origin.x + frame.size.width / 2 - width / 2
+        self._panel.setFrame_display_(
+            NSMakeRect(x, frame.origin.y, width, frame.size.height), True)
+
     def _pump_appkit(self) -> bool:
         """Drain the event queue; returns True when asked to quit."""
         quit_now = False
@@ -352,12 +402,22 @@ class RecordingOverlay:
                 kind, value = self._events.get_nowait()
                 if kind == "show":
                     self._status = value
+                    if value != "recording":
+                        self._partial = ""
+                        self._appkit_set_width(self.width)
                     self._panel.orderFrontRegardless()  # never activates us
                 elif kind == "hide":
                     self._status = "hidden"
+                    self._partial = ""
+                    self._appkit_set_width(self.width)
                     self._panel.orderOut_(None)
                 elif kind == "level":
                     self._level = value
+                elif kind == "partial":
+                    self._partial = value
+                    if self._status == "recording":
+                        self._appkit_set_width(
+                            _PILL_W_TEXT if value else self.width)
                 elif kind == "quit":
                     quit_now = True
         except queue.Empty:

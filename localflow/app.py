@@ -21,7 +21,7 @@ from .config import Config
 from .context import ActiveWindowProvider, WindowInfo, match_profile
 from .dictionary import PersonalDictionary
 from .engines.base import STTEngine
-from .formatting import format_transcript, smart_join
+from .formatting import detect_send_command, format_transcript, smart_join
 from .history import History
 from .injector import CallbackInjector, Injector
 from .llm import LLMClient
@@ -44,6 +44,7 @@ class DictationEvent:
     llm_used: bool = False
     stt_seconds: float = 0.0
     llm_seconds: float = 0.0
+    auto_sent: bool = False  # voice action "send it" pressed Enter
 
 
 @dataclass
@@ -91,6 +92,9 @@ class FlowController:
             self.history = History(":memory:")
 
         self.state = ControllerState()
+        # Serializes engine access between the final pass and the live
+        # preview thread (whisper models aren't concurrency-safe).
+        self.transcribe_lock = threading.Lock()
         self.listeners: List[Callable[[DictationEvent], None]] = []
         self.partial_listeners: List[Callable[[str], None]] = []
         self.status_listeners: List[Callable[[str], None]] = []
@@ -186,11 +190,12 @@ class FlowController:
 
         language = self.config.engine.language
         t_stt = time.time()
-        result = self.engine.transcribe(
-            audio,
-            language=None if language == "auto" else language,
-            initial_prompt=self.dictionary.initial_prompt(),
-        )
+        with self.transcribe_lock:
+            result = self.engine.transcribe(
+                audio,
+                language=None if language == "auto" else language,
+                initial_prompt=self.dictionary.initial_prompt(),
+            )
         stt_seconds = time.time() - t_stt
         raw = result.clean_text
 
@@ -200,10 +205,15 @@ class FlowController:
 
         llm_used = False
         llm_seconds = 0.0
+        send_after = False
         if mode == "command":
             formatted = raw  # command instructions are used verbatim
         else:
             corrected = self.dictionary.correct(raw)
+            if self.config.output.voice_send:
+                # strip a trailing "send it" before formatting so neither
+                # the rules nor the LLM ever see the command itself
+                corrected, send_after = detect_send_command(corrected)
             formatted = format_transcript(corrected, self.config.formatting, overrides)
             # AI cleanup pass (local LLM); rule-based text is the fallback.
             if formatted and self.config.llm.enabled and self.config.llm.format_dictation:
@@ -235,6 +245,19 @@ class FlowController:
             except Exception:
                 self.sounds.error()
 
+        auto_sent = False
+        if send_after and hasattr(self.injector, "press_return") \
+                and (injected or not formatted):
+            # "send it" alone (no other words) sends whatever is already
+            # typed in the target field - intentional.
+            try:
+                time.sleep(0.05)
+                self.injector.press_return()
+                auto_sent = True
+                self.state.session_text = ""  # message sent; context over
+            except Exception:
+                self.sounds.error()
+
         event = DictationEvent(
             raw_text=raw,
             formatted_text=formatted,
@@ -247,6 +270,7 @@ class FlowController:
             llm_used=llm_used,
             stt_seconds=stt_seconds,
             llm_seconds=llm_seconds,
+            auto_sent=auto_sent,
         )
         self.state.last_event = event
 

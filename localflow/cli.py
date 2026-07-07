@@ -268,12 +268,36 @@ def cmd_run(args) -> int:
         threading.Thread(target=worker, daemon=True).start()
 
     if overlay_ok:
+        preview_box: dict = {}
+
+        def stop_preview() -> None:
+            p = preview_box.pop("p", None)
+            if p:
+                p.stop()  # joins; guarantees no overlap with the final pass
+
         def on_status(status: str) -> None:
             if status == "recording":
                 overlay.show("recording")
+                if config.live_preview and overlay.native:
+                    from .streaming import StreamingPreview
+
+                    lang = config.engine.language
+                    p = StreamingPreview(
+                        controller.engine,
+                        controller.recorder,
+                        on_partial=overlay.set_partial,
+                        interval=1.2,
+                        language=None if lang == "auto" else lang,
+                        initial_prompt=controller.dictionary.initial_prompt(),
+                        lock=controller.transcribe_lock,
+                    )
+                    preview_box["p"] = p
+                    p.start()
             elif status == "transcribing":
+                stop_preview()
                 overlay.show("processing")
             else:
+                stop_preview()
                 overlay.hide()
 
         controller.on_status(on_status)
