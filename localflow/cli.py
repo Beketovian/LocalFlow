@@ -187,20 +187,30 @@ def cmd_run(args) -> int:
         if overlay_ok:
             overlay.set_level(min(1.0, rms(chunk) * 12.0))
 
-    controller = FlowController(
-        config=config,
-        recorder=MicrophoneRecorder(
+    def make_recorder() -> MicrophoneRecorder:
+        return MicrophoneRecorder(
             sample_rate=config.audio.sample_rate,
-            device=config.audio.input_device,
+            device=config.audio.input_device or None,  # "" = system default
             max_seconds=config.audio.max_recording_seconds,
             on_chunk=on_chunk,
-        ),
+        )
+
+    controller = FlowController(
+        config=config,
+        recorder=make_recorder(),
         injector=create_injector(
             config.output.method,
             config.output.type_interval,
             config.output.restore_clipboard,
         ),
     )
+
+    def apply_audio_settings() -> None:
+        """Dashboard hook: mic/sound changes apply without a restart."""
+        controller.sounds.enabled = config.audio.feedback_sounds
+        if controller.state.status == "idle":
+            controller.recorder = make_recorder()
+            print(f"  microphone: {config.audio.input_device or 'system default'}")
 
     if overlay_ok:
         def on_status(status: str) -> None:
@@ -258,6 +268,7 @@ def cmd_run(args) -> int:
                 hotkey_recorder=lambda: record_hotkey(),
                 on_hotkeys_changed=lambda: rebuild_listener(),
             )
+            dashboard.on_audio_changed = apply_audio_settings
             port = dashboard.start()
             note = "" if port == config.dashboard.port else \
                 f"  (port {config.dashboard.port} was busy)"
@@ -366,6 +377,7 @@ def cmd_run(args) -> int:
         """Dashboard hook: capture one combo, listener paused meanwhile."""
         from .hotkeys import capture_combo
 
+        listener_box["capturing"] = True  # watchdog: stand down
         old = listener_box.get("l")
         if old:
             old.stop()
@@ -373,6 +385,7 @@ def cmd_run(args) -> int:
             return capture_combo(timeout=8.0)
         finally:
             rebuild_listener()
+            listener_box["capturing"] = False
 
     listener_box["l"] = make_listener()
     listener_box["l"].start()
@@ -443,6 +456,26 @@ def cmd_run(args) -> int:
                 controller.llm.warm_up()
 
         threading.Thread(target=llm_keepalive, daemon=True).start()
+
+    def hotkey_watchdog() -> None:
+        """Rebuild the listener if pynput's thread ever dies silently."""
+        while not stop_event.wait(30):
+            if listener_box.get("capturing"):
+                continue  # combo recording legitimately stopped the listener
+            active = listener_box.get("l")
+            try:
+                dead = active is None or active._listener is None \
+                    or not active._listener.running
+            except Exception:
+                dead = True
+            if dead:
+                print("  ! hotkey listener died - rebuilding")
+                try:
+                    rebuild_listener()
+                except Exception as exc:
+                    print(f"  ! rebuild failed: {exc!r}")
+
+    threading.Thread(target=hotkey_watchdog, daemon=True).start()
 
     def daemon_loop() -> None:
         while not stop_event.is_set():
@@ -650,18 +683,23 @@ def cmd_autostart(args) -> int:
             print("Install the app first: ./scripts/build_app.sh --install")
             return 1
         agent.parent.mkdir(parents=True, exist_ok=True)
+        # Runs the app's executable directly (not 'open') so KeepAlive can
+        # watch it: a crash restarts LocalFlow, a menu-bar Quit (exit 0)
+        # stays quit.
         agent.write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key><string>dev.localflow.app</string>
     <key>ProgramArguments</key>
-    <array><string>/usr/bin/open</string><string>-ga</string><string>{app}</string></array>
+    <array><string>{app}/Contents/MacOS/LocalFlow</string></array>
     <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+    <key>ProcessType</key><string>Interactive</string>
 </dict>
 </plist>
 """)
-        print(f"LocalFlow will start at login ({agent})")
+        print(f"LocalFlow will start at login and auto-restart on crashes\n({agent})")
     elif args.action == "off":
         if agent.exists():
             agent.unlink()

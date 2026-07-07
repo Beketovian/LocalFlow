@@ -116,9 +116,11 @@ class DashboardServer:
         self.port = port
         # Optional daemon hooks: hotkey_recorder() blocks while capturing a
         # key combo and returns it as a string (or None on timeout);
-        # on_hotkeys_changed() applies edited hotkeys to the live listener.
+        # on_hotkeys_changed() applies edited hotkeys to the live listener;
+        # on_audio_changed() swaps the microphone/sound settings in place.
         self.hotkey_recorder = hotkey_recorder
         self.on_hotkeys_changed = on_hotkeys_changed
+        self.on_audio_changed = None
         self._httpd: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -161,6 +163,23 @@ class DashboardServer:
                     self._send({
                         "words": controller.dictionary.words,
                         "replacements": controller.dictionary.replacements,
+                    })
+                elif url.path == "/api/audio/devices":
+                    devices = []
+                    try:
+                        import sounddevice as sd
+
+                        seen = set()
+                        for d in sd.query_devices():
+                            name = d["name"]
+                            if d["max_input_channels"] > 0 and name not in seen:
+                                seen.add(name)
+                                devices.append(name)
+                    except Exception:
+                        pass
+                    self._send({
+                        "devices": devices,
+                        "current": controller.config.audio.input_device or "",
                     })
                 elif url.path == "/api/llm":
                     params = parse_qs(url.query)
@@ -214,6 +233,11 @@ class DashboardServer:
                             server.on_hotkeys_changed()
                         except Exception:
                             pass  # next daemon restart picks them up anyway
+                    if "audio" in data and server.on_audio_changed:
+                        try:
+                            server.on_audio_changed()
+                        except Exception:
+                            pass
                     self._send(controller.config.to_dict())
                 elif url.path == "/api/hotkeys/record":
                     combo = None

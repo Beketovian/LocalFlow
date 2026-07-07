@@ -12,7 +12,9 @@
  */
 
 #include <dlfcn.h>
+#include <libgen.h>
 #include <limits.h>
+#include <mach-o/dyld.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,13 +28,47 @@
 
 typedef int (*py_bytes_main_t)(int, char **);
 
+/* Standalone bundles bake "@RESOURCES@/..." into LOCALFLOW_PYTHONPATH;
+ * expand it to <bundle>/Contents/Resources at runtime so the app keeps
+ * working wherever it is moved. */
+static void resolve_pythonpath(char *out, size_t out_size) {
+    const char *template = LOCALFLOW_PYTHONPATH;
+    if (strstr(template, "@RESOURCES@") == NULL) {
+        snprintf(out, out_size, "%s", template);
+        return;
+    }
+    char exe[PATH_MAX];
+    uint32_t size = sizeof exe;
+    char resources[PATH_MAX] = "";
+    if (_NSGetExecutablePath(exe, &size) == 0) {
+        char real[PATH_MAX];
+        if (realpath(exe, real) != NULL) {
+            /* .../LocalFlow.app/Contents/MacOS/LocalFlow -> .../Contents */
+            char *contents = dirname(dirname(real));
+            snprintf(resources, sizeof resources, "%s/Resources", contents);
+        }
+    }
+    size_t pos = 0;
+    for (const char *p = template; *p != '\0' && pos + 1 < out_size;) {
+        if (strncmp(p, "@RESOURCES@", 11) == 0) {
+            pos += (size_t)snprintf(out + pos, out_size - pos, "%s", resources);
+            p += 11;
+        } else {
+            out[pos++] = *p++;
+        }
+    }
+    out[pos < out_size ? pos : out_size - 1] = '\0';
+}
+
 int main(int argc, char *argv[]) {
     (void)argc;
 
     /* Environment the daemon expects (mirrors the old shell launcher). */
+    char pythonpath[4 * PATH_MAX];
+    resolve_pythonpath(pythonpath, sizeof pythonpath);
     setenv("LOCALFLOW_APP", "1", 1);
     setenv("PYTHONUNBUFFERED", "1", 1);
-    setenv("PYTHONPATH", LOCALFLOW_PYTHONPATH, 1);
+    setenv("PYTHONPATH", pythonpath, 1);
 
     /* Send stdout/stderr to the log file - there is no terminal. */
     const char *home = getenv("HOME");

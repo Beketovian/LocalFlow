@@ -67,6 +67,7 @@ class _DarwinFnTap:
         self._on_change = on_change  # True = fn down, False = fn up
         self._thread: Optional[threading.Thread] = None
         self._loop = None
+        self._tap = None
         self._down = False
 
     def start(self) -> None:
@@ -74,7 +75,11 @@ class _DarwinFnTap:
 
         def callback(proxy, etype, event, refcon):
             try:
-                if etype == Quartz.kCGEventFlagsChanged:
+                if etype in (Quartz.kCGEventTapDisabledByTimeout,
+                             Quartz.kCGEventTapDisabledByUserInput):
+                    # macOS disables taps it considers stuck; re-arm ours.
+                    Quartz.CGEventTapEnable(self._tap, True)
+                elif etype == Quartz.kCGEventFlagsChanged:
                     keycode = Quartz.CGEventGetIntegerValueField(
                         event, Quartz.kCGKeyboardEventKeycode)
                     if keycode == _FN_KEYCODE:
@@ -98,6 +103,7 @@ class _DarwinFnTap:
         if tap is None:
             raise RuntimeError(
                 "cannot create fn-key tap (Input Monitoring not granted?)")
+        self._tap = tap
         source = Quartz.CFMachPortCreateRunLoopSource(None, tap, 0)
         ready = threading.Event()
 

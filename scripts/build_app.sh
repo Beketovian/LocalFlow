@@ -2,8 +2,12 @@
 # Build LocalFlow.app - a double-clickable, menu-bar macOS app around the
 # dictation daemon. No terminal, no LM Studio (the LLM runs in-process).
 #
-#   ./scripts/build_app.sh            build into dist/LocalFlow.app
-#   ./scripts/build_app.sh --install  also copy to /Applications
+#   ./scripts/build_app.sh                build into dist/LocalFlow.app
+#   ./scripts/build_app.sh --install      also copy to /Applications
+#   ./scripts/build_app.sh --standalone   copy code + deps INTO the bundle
+#                                         (~450 MB; survives moving/deleting
+#                                         this repo, still needs Homebrew's
+#                                         python@3.13 on the machine)
 #
 # The bundle launches the daemon from this repo's venv (absolute path baked
 # in at build time), logs to ~/Library/Logs/LocalFlow.log, and gets its own
@@ -17,6 +21,16 @@ VENV="$REPO/venv"
 PY="$VENV/bin/python"
 APP="$REPO/dist/LocalFlow.app"
 VERSION="$("$PY" -c 'import localflow; print(localflow.__version__)')"
+
+INSTALL=0
+STANDALONE=0
+for arg in "$@"; do
+    case "$arg" in
+        --install) INSTALL=1 ;;
+        --standalone) STANDALONE=1 ;;
+        *) echo "unknown option: $arg"; exit 1 ;;
+    esac
+done
 
 [ -x "$VENV/bin/localflow" ] || { echo "venv missing; run: python -m venv venv && venv/bin/pip install -e '.[whispercpp,desktop]' mlx-lm 'transformers<5'"; exit 1; }
 
@@ -55,9 +69,24 @@ PLIST
 SITE_PACKAGES="$("$PY" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
 LIBPYTHON="$("$PY" -c 'import sysconfig; import os.path as p; print(p.join(sysconfig.get_config_var("LIBDIR"), "libpython3.13.dylib"))')"
 [ -f "$LIBPYTHON" ] || { echo "libpython not found at $LIBPYTHON"; exit 1; }
+
+if [ "$STANDALONE" = 1 ]; then
+    # Copy the code and every dependency into the bundle: the app keeps
+    # working if this repo moves or the venv is rebuilt. Data files inside
+    # Resources/ are fine with codesign (unlike Contents/ or MacOS/).
+    echo "  copying dependencies into the bundle (standalone)..."
+    PYROOT="$APP/Contents/Resources/python"
+    mkdir -p "$PYROOT"
+    rsync -a --exclude "__pycache__" "$SITE_PACKAGES/" "$PYROOT/site-packages/"
+    rsync -a --exclude "__pycache__" "$REPO/localflow" "$PYROOT/app/"
+    STUB_PYTHONPATH="@RESOURCES@/python/site-packages:@RESOURCES@/python/app"
+else
+    STUB_PYTHONPATH="$SITE_PACKAGES:$REPO"
+fi
+
 clang -O2 -Wall \
     -DLIBPYTHON_PATH="\"$LIBPYTHON\"" \
-    -DLOCALFLOW_PYTHONPATH="\"$SITE_PACKAGES:$REPO\"" \
+    -DLOCALFLOW_PYTHONPATH="\"$STUB_PYTHONPATH\"" \
     -o "$APP/Contents/MacOS/LocalFlow" "$REPO/scripts/app_stub.c"
 
 # ------------------------------------------------------------------- icon
@@ -88,7 +117,7 @@ codesign --force -s - "$APP" 2> /dev/null
 
 echo "Built: $APP"
 
-if [ "${1:-}" = "--install" ]; then
+if [ "$INSTALL" = 1 ]; then
     rm -rf "/Applications/LocalFlow.app"
     cp -R "$APP" /Applications/
     echo "Installed: /Applications/LocalFlow.app"

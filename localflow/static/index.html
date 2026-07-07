@@ -94,6 +94,12 @@ input[type=text], input[type=search], select {
   padding: 9px 13px; font: inherit; color: var(--ink); outline: none; min-width: 0;
 }
 input:focus, select:focus { border-color: #C9C2B0; }
+select {
+  -webkit-appearance: none; appearance: none; cursor: pointer;
+  padding-right: 34px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23787368' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat; background-position: right 13px center;
+}
 button {
   background: var(--ink); color: #fff; border: 0; border-radius: 10px;
   padding: 9px 16px; font: inherit; font-weight: 550; cursor: pointer;
@@ -105,6 +111,13 @@ button.x { background: transparent; color: var(--ink-2); padding: 2px 6px; font-
 button.x:hover { color: var(--accent); opacity: 1; }
 .row { display: flex; gap: 10px; margin: 12px 0; flex-wrap: wrap; align-items: center; }
 .row input[type=text], .row input[type=search] { flex: 1; }
+
+.raw { margin-top: 8px; padding: 8px 10px; background: var(--panel);
+  border-radius: 8px; font-size: 12.5px; color: var(--ink-2); }
+.raw > div { margin: 2px 0; }
+.rawlbl { display: inline-block; min-width: 58px; font-weight: 600;
+  text-transform: uppercase; font-size: 10px; letter-spacing: .05em; }
+button.rawbtn { font-size: 11px; padding: 1px 4px; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
@@ -273,6 +286,8 @@ button.x:hover { color: var(--accent); opacity: 1; }
           <option value="auto">Auto</option><option value="type">Simulated typing</option>
           <option value="clipboard">Clipboard paste</option><option value="stdout">Stdout</option>
         </select></div>
+      <div class="set-row"><div class="l"><b>Microphone</b><small>Applies immediately</small></div>
+        <select id="micDevice" style="max-width:280px"><option value="">System default</option></select></div>
       <div class="set-row"><div class="l"><b>Feedback sounds</b><small>Soft tones on start and stop</small></div>
         <label class="switch"><input type="checkbox" id="sndFeedback"><span class="slider"></span></label></div>
     </div>
@@ -318,10 +333,17 @@ function renderEntries(el, entries, emptyMsg) {
       <div style="margin-top:6px">Hold <kbd id="k2">${esc(hotkeyLabel())}</kbd> and start speaking.</div></div>`;
     return;
   }
-  el.innerHTML = entries.map(e => `<div class="item">
-    <div class="txt">${esc(e.formatted_text)}</div>
-    <div class="meta"><span class="app">${esc(e.app || 'unknown app')}</span><br>${new Date(e.timestamp * 1000).toLocaleString()}</div>
-    <button class="x" onclick="delEntry(${e.id})" title="Delete">&#10005;</button></div>`).join('');
+  el.innerHTML = entries.map(e => {
+    const changed = e.raw_text && e.raw_text.trim() !== e.formatted_text.trim();
+    const debug = e.raw_text ? `<div class="raw" hidden>
+        <div><span class="rawlbl">whisper</span> ${esc(e.raw_text)}</div>
+        <div><span class="rawlbl">output</span> ${esc(e.formatted_text)}</div></div>` : '';
+    return `<div class="item">
+    <div class="txt">${esc(e.formatted_text)}${debug}</div>
+    <div class="meta"><span class="app">${esc(e.app || 'unknown app')}</span><br>${new Date(e.timestamp * 1000).toLocaleString()}
+      ${e.raw_text ? `<br><button class="ghost rawbtn" onclick="toggleRaw(this)">${changed ? 'raw ≠' : 'raw'}</button>` : ''}</div>
+    <button class="x" onclick="delEntry(${e.id})" title="Delete">&#10005;</button></div>`;
+  }).join('');
 }
 async function loadRecent() {
   const h = await jf('/api/history?limit=8');
@@ -333,6 +355,10 @@ async function loadHistory() {
   const q = $('q').value;
   const h = await jf('/api/history?limit=200&q=' + encodeURIComponent(q));
   renderEntries($('histList'), h.entries, q ? 'No matches' : 'Nothing here yet');
+}
+function toggleRaw(btn) {
+  const raw = btn.closest('.item').querySelector('.raw');
+  if (raw) raw.hidden = !raw.hidden;
 }
 async function delEntry(id) {
   await jf('/api/history/delete', { method: 'POST', body: JSON.stringify({ id }) });
@@ -397,7 +423,7 @@ function buildSettings() {
   $('llmEnabled').checked = !!CONFIG.llm?.enabled;
   $('llmCmd').checked = !!CONFIG.llm?.command_mode;
   $('llmUrl').value = CONFIG.llm?.base_url || 'auto';
-  loadLLMStatus();
+  loadLLMStatus(); loadMics();
   $('userName').onchange = () => save({ user_name: $('userName').value }).then(applyGreeting);
   $('engLang').onchange = () => save({ engine: { language: $('engLang').value } });
   $('engModel').onchange = () => save({ engine: { model: $('engModel').value } });
@@ -430,6 +456,15 @@ function buildSettings() {
   $('llmCmd').onchange = () => save({ llm: { command_mode: $('llmCmd').checked } });
   $('llmModel').onchange = () => save({ llm: { model: $('llmModel').value } }).then(loadLLMStatus);
   $('llmUrl').onchange = () => save({ llm: { base_url: $('llmUrl').value.trim() || 'auto' } }).then(loadLLMStatus);
+}
+async function loadMics() {
+  try {
+    const d = await jf('/api/audio/devices');
+    $('micDevice').innerHTML = '<option value="">System default</option>' +
+      d.devices.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+    $('micDevice').value = d.current || '';
+    $('micDevice').onchange = () => save({ audio: { input_device: $('micDevice').value } });
+  } catch (e) {}
 }
 async function loadLLMStatus() {
   try {
