@@ -110,3 +110,54 @@ class TestCallbackSafety:
         listener.handle_press("space")
         listener.handle_release("space")  # release still delivered
         assert calls == ["press", "release"]
+
+
+class TestFnKey:
+    def test_fn_alone_as_push_to_talk(self):
+        # Wispr Flow's default: hold fn to talk. The fn token arrives from
+        # the native tap on macOS; the combo logic is platform-neutral.
+        events = []
+        listener = HotkeyListener(
+            push_to_talk="<fn>",
+            toggle_dictation="<ctrl>+<shift>+<space>",
+            command_mode="<ctrl>+<alt>+<space>",
+            on_ptt_press=lambda: events.append("press"),
+            on_ptt_release=lambda: events.append("release"),
+            on_toggle=lambda: events.append("toggle"),
+            on_command=lambda: events.append("command"),
+        )
+        listener.handle_press("fn")
+        assert events == ["press"]
+        listener.handle_release("fn")
+        assert events == ["press", "release"]
+
+    def test_fn_combo(self):
+        events = []
+        listener = HotkeyListener(
+            push_to_talk="<fn>+d",
+            toggle_dictation="",
+            command_mode="",
+            on_ptt_press=lambda: events.append("press"),
+            on_ptt_release=lambda: events.append("release"),
+            on_toggle=lambda: None,
+            on_command=lambda: None,
+        )
+        listener.handle_press("fn")
+        assert events == []
+        listener.handle_press("d")
+        assert events == ["press"]
+        listener.handle_release("d")
+        assert events == ["press", "release"]
+
+
+class TestFormatCombo:
+    def test_round_trips_through_parse(self):
+        from localflow.hotkeys import format_combo
+
+        for tokens in ({"ctrl", "space"}, {"fn"}, {"ctrl", "alt", "d"}, {"f9"}):
+            assert _parse_combo(format_combo(tokens)) == tokens
+
+    def test_modifier_ordering(self):
+        from localflow.hotkeys import format_combo
+
+        assert format_combo({"d", "ctrl", "fn"}) == "<fn>+<ctrl>+d"

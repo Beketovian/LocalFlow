@@ -4,6 +4,11 @@ Uses pynput (X11/Windows/macOS). Push-to-talk is hold-to-record: recording
 starts when the full combo goes down and stops when any key of the combo is
 released - matching Wispr Flow's hold-the-fn-key interaction.
 
+The fn/globe key (Wispr Flow's default talk key) is invisible to pynput on
+macOS - it never arrives as a key event, only as a modifier flag. A small
+native listen-only CGEvent tap (_DarwinFnTap) watches for it and feeds the
+same press/release path, so "<fn>" works in any combo on macOS.
+
 Two rules keep the listener alive:
 
 * Callbacks are exception-proofed - a raise would otherwise kill pynput's
@@ -47,6 +52,75 @@ def _key_token(key) -> Optional[str]:
     return None
 
 
+_FN_KEYCODE = 63  # kVK_Function
+
+
+class _DarwinFnTap:
+    """Listen-only CGEvent tap reporting fn/globe key presses (macOS).
+
+    Watches flagsChanged events for keycode 63 and diffs the SecondaryFn
+    flag. Runs its own CFRunLoop on a daemon thread. Requires the Input
+    Monitoring permission the app already holds for pynput.
+    """
+
+    def __init__(self, on_change: Callable[[bool], None]) -> None:
+        self._on_change = on_change  # True = fn down, False = fn up
+        self._thread: Optional[threading.Thread] = None
+        self._loop = None
+        self._down = False
+
+    def start(self) -> None:
+        import Quartz
+
+        def callback(proxy, etype, event, refcon):
+            try:
+                if etype == Quartz.kCGEventFlagsChanged:
+                    keycode = Quartz.CGEventGetIntegerValueField(
+                        event, Quartz.kCGKeyboardEventKeycode)
+                    if keycode == _FN_KEYCODE:
+                        down = bool(Quartz.CGEventGetFlags(event)
+                                    & Quartz.kCGEventFlagMaskSecondaryFn)
+                        if down != self._down:
+                            self._down = down
+                            self._on_change(down)
+            except Exception:
+                pass
+            return event
+
+        tap = Quartz.CGEventTapCreate(
+            Quartz.kCGSessionEventTap,
+            Quartz.kCGHeadInsertEventTap,
+            Quartz.kCGEventTapOptionListenOnly,
+            Quartz.CGEventMaskBit(Quartz.kCGEventFlagsChanged),
+            callback,
+            None,
+        )
+        if tap is None:
+            raise RuntimeError(
+                "cannot create fn-key tap (Input Monitoring not granted?)")
+        source = Quartz.CFMachPortCreateRunLoopSource(None, tap, 0)
+        ready = threading.Event()
+
+        def run() -> None:
+            self._loop = Quartz.CFRunLoopGetCurrent()
+            Quartz.CFRunLoopAddSource(self._loop, source,
+                                      Quartz.kCFRunLoopCommonModes)
+            Quartz.CGEventTapEnable(tap, True)
+            ready.set()
+            Quartz.CFRunLoopRun()
+
+        self._thread = threading.Thread(target=run, daemon=True)
+        self._thread.start()
+        ready.wait(timeout=2)
+
+    def stop(self) -> None:
+        import Quartz
+
+        if self._loop is not None:
+            Quartz.CFRunLoopStop(self._loop)
+            self._loop = None
+
+
 class HotkeyListener:
     def __init__(
         self,
@@ -68,6 +142,7 @@ class HotkeyListener:
         self._down: Set[str] = set()
         self._ptt_active = False
         self._listener = None
+        self._fn_tap: Optional[_DarwinFnTap] = None
         self._lock = threading.Lock()
 
     # The press/release handlers are separated from pynput so tests can drive
@@ -121,11 +196,89 @@ class HotkeyListener:
         self._listener = keyboard.Listener(on_press=on_press, on_release=on_release)
         self._listener.start()
 
+        # fn/globe support: only where a combo actually uses it (macOS).
+        if sys.platform == "darwin" and "fn" in (self.ptt | self.toggle | self.command):
+            try:
+                self._fn_tap = _DarwinFnTap(
+                    lambda down: self.handle_press("fn") if down
+                    else self.handle_release("fn"))
+                self._fn_tap.start()
+            except Exception as exc:
+                print(f"localflow: fn key unavailable: {exc}", file=sys.stderr)
+                self._fn_tap = None
+
     def stop(self) -> None:
         if self._listener:
             self._listener.stop()
             self._listener = None
+        if self._fn_tap:
+            self._fn_tap.stop()
+            self._fn_tap = None
 
     def join(self) -> None:
         if self._listener:
             self._listener.join()
+
+
+# ------------------------------------------------------------ combo capture
+
+_MODIFIER_ORDER = {"fn": 0, "ctrl": 1, "alt": 2, "shift": 3, "cmd": 4}
+
+
+def format_combo(tokens: Set[str]) -> str:
+    """{'ctrl','space'} -> '<ctrl>+<space>' (parse_combo round-trips)."""
+    parts = sorted(tokens, key=lambda t: (_MODIFIER_ORDER.get(t, 9), t))
+    return "+".join(f"<{t}>" if len(t) > 1 else t for t in parts)
+
+
+def capture_combo(timeout: float = 8.0) -> Optional[str]:
+    """Block until the user presses a key or combo; return it as a string.
+
+    The combo is everything held down at the moment the first key is
+    released - press Ctrl+Alt+D and you get '<ctrl>+<alt>+d'. Returns None
+    on timeout. Callers must pause any active HotkeyListener first or the
+    pressed keys will also trigger dictation.
+    """
+    from pynput import keyboard
+
+    done = threading.Event()
+    held: Set[str] = set()
+    combo: Set[str] = set()
+
+    def snapshot() -> None:
+        combo.clear()
+        combo.update(held)
+
+    def on_press(key):
+        token = _key_token(key)
+        if token:
+            held.add(token)
+            snapshot()
+
+    def on_release(key):
+        done.set()
+        return False  # one combo per capture: stop the listener
+
+    listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+    listener.start()
+
+    fn_tap = None
+    if sys.platform == "darwin":
+        def fn_change(down: bool) -> None:
+            if down:
+                held.add("fn")
+                snapshot()
+            else:
+                done.set()
+
+        try:
+            fn_tap = _DarwinFnTap(fn_change)
+            fn_tap.start()
+        except Exception:
+            fn_tap = None
+
+    done.wait(timeout)
+    listener.stop()
+    if fn_tap:
+        fn_tap.stop()
+    return format_combo(combo) if combo else None

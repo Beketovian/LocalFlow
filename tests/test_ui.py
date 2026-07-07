@@ -200,3 +200,43 @@ class TestOverlay:
         overlay.set_level(-3)
         kind, value = overlay._events.get_nowait()
         assert value == 0.0
+
+
+class TestHotkeyRecording:
+    def teardown_method(self):
+        if hasattr(self, "server"):
+            self.server.stop()
+
+    def _post(self, path, payload):
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}{path}",
+            data=json.dumps(payload).encode(), method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read())
+
+    def test_record_endpoint_returns_combo(self):
+        controller = make_controller()
+        self.server = DashboardServer(
+            controller, port=0, hotkey_recorder=lambda: "<ctrl>+<alt>+k")
+        self.port = self.server.start()
+        assert self._post("/api/hotkeys/record", {}) == {"combo": "<ctrl>+<alt>+k"}
+
+    def test_record_endpoint_without_recorder(self):
+        controller = make_controller()
+        self.server = DashboardServer(controller, port=0)
+        self.port = self.server.start()
+        assert self._post("/api/hotkeys/record", {}) == {"combo": None}
+
+    def test_hotkey_settings_patch_triggers_rebuild(self):
+        rebuilds = []
+        controller = make_controller()
+        self.server = DashboardServer(
+            controller, port=0, on_hotkeys_changed=lambda: rebuilds.append(1))
+        self.port = self.server.start()
+        self._post("/api/settings", {"hotkeys": {"push_to_talk": "<fn>"}})
+        assert controller.config.hotkeys.push_to_talk == "<fn>"
+        assert rebuilds == [1]
+        # non-hotkey patches don't churn the listener
+        self._post("/api/settings", {"formatting": {"remove_fillers": True}})
+        assert rebuilds == [1]

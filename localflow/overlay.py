@@ -310,19 +310,33 @@ class RecordingOverlay:
             return False
 
     def _run_appkit(self) -> None:
-        """30 fps loop pumping the Cocoa runloop from Python.
+        """30 fps loop pumping Cocoa events from Python.
 
         Keeping Python in charge (instead of NSApp.run()) means Ctrl+C and
-        stop() behave exactly like the Tk backend.
+        stop() behave exactly like the Tk backend. Events must be dequeued
+        and dispatched explicitly - just spinning the runloop draws windows
+        but never delivers clicks, leaving the menu bar item unresponsive.
         """
-        from Foundation import NSDate, NSRunLoop
+        import AppKit
+        from Foundation import NSDate, NSDefaultRunLoopMode
 
-        runloop = NSRunLoop.currentRunLoop()
+        app = AppKit.NSApplication.sharedApplication()
+        app.finishLaunching()
         try:
             while not self._pump_appkit():
-                runloop.runUntilDate_(
-                    NSDate.dateWithTimeIntervalSinceNow_(1.0 / _FPS)
-                )
+                # Wait up to one frame for an event; dispatch everything
+                # pending. A status-item click starts menu tracking inside
+                # sendEvent_, which nests its own runloop until dismissed.
+                deadline = NSDate.dateWithTimeIntervalSinceNow_(1.0 / _FPS)
+                while True:
+                    event = app.nextEventMatchingMask_untilDate_inMode_dequeue_(
+                        AppKit.NSEventMaskAny, deadline,
+                        NSDefaultRunLoopMode, True,
+                    )
+                    if event is None:
+                        break
+                    app.sendEvent_(event)
+                    deadline = NSDate.dateWithTimeIntervalSinceNow_(0.0)
         finally:
             self._running = False
             try:

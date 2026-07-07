@@ -242,7 +242,13 @@ def cmd_run(args) -> int:
     dashboard = None
     if config.dashboard.enabled:
         try:
-            dashboard = DashboardServer(controller, config.dashboard.host, config.dashboard.port)
+            # Hotkey hooks late-bind: record_hotkey/rebuild_listener are
+            # defined further down, before any request can arrive.
+            dashboard = DashboardServer(
+                controller, config.dashboard.host, config.dashboard.port,
+                hotkey_recorder=lambda: record_hotkey(),
+                on_hotkeys_changed=lambda: rebuild_listener(),
+            )
             port = dashboard.start()
             note = "" if port == config.dashboard.port else \
                 f"  (port {config.dashboard.port} was busy)"
@@ -323,16 +329,44 @@ def cmd_run(args) -> int:
             print(f"  command: {event.raw_text!r} -> "
                   f"{'applied' if edited is not None else 'not understood'}")
 
-    listener = HotkeyListener(
-        push_to_talk=config.hotkeys.push_to_talk,
-        toggle_dictation=config.hotkeys.toggle_dictation,
-        command_mode=config.hotkeys.command_mode,
-        on_ptt_press=lambda: actions.put(ptt_press),
-        on_ptt_release=lambda: actions.put(ptt_release),
-        on_toggle=lambda: actions.put(toggle),
-        on_command=lambda: actions.put(command_mode),
-    )
-    listener.start()
+    # The listener is rebuildable so hotkey edits in the dashboard apply
+    # live (no daemon restart), and so combo recording can pause it.
+    listener_box: dict = {}
+
+    def make_listener() -> HotkeyListener:
+        return HotkeyListener(
+            push_to_talk=config.hotkeys.push_to_talk,
+            toggle_dictation=config.hotkeys.toggle_dictation,
+            command_mode=config.hotkeys.command_mode,
+            on_ptt_press=lambda: actions.put(ptt_press),
+            on_ptt_release=lambda: actions.put(ptt_release),
+            on_toggle=lambda: actions.put(toggle),
+            on_command=lambda: actions.put(command_mode),
+        )
+
+    def rebuild_listener() -> None:
+        old = listener_box.get("l")
+        if old:
+            old.stop()
+        new = make_listener()
+        new.start()
+        listener_box["l"] = new
+        print(f"  hotkeys applied: hold {config.hotkeys.push_to_talk} to dictate")
+
+    def record_hotkey():
+        """Dashboard hook: capture one combo, listener paused meanwhile."""
+        from .hotkeys import capture_combo
+
+        old = listener_box.get("l")
+        if old:
+            old.stop()
+        try:
+            return capture_combo(timeout=8.0)
+        finally:
+            rebuild_listener()
+
+    listener_box["l"] = make_listener()
+    listener_box["l"].start()
     print(f"  hold {config.hotkeys.push_to_talk} to dictate;"
           f" {config.hotkeys.toggle_dictation} toggles hands-free. Ctrl+C quits.")
     _warn_if_macos_untrusted()
@@ -410,7 +444,7 @@ def cmd_run(args) -> int:
     finally:
         stop_event.set()
         actions.put(None)
-        listener.stop()
+        listener_box["l"].stop()
         if dashboard:
             dashboard.stop()
         if tray:

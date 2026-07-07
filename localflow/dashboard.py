@@ -108,10 +108,17 @@ loadStats(); loadDict(); loadHistory(); setInterval(loadStats, 10000); setInterv
 
 
 class DashboardServer:
-    def __init__(self, controller: FlowController, host: str = "127.0.0.1", port: int = 5170) -> None:
+    def __init__(self, controller: FlowController, host: str = "127.0.0.1",
+                 port: int = 5170, hotkey_recorder=None,
+                 on_hotkeys_changed=None) -> None:
         self.controller = controller
         self.host = host
         self.port = port
+        # Optional daemon hooks: hotkey_recorder() blocks while capturing a
+        # key combo and returns it as a string (or None on timeout);
+        # on_hotkeys_changed() applies edited hotkeys to the live listener.
+        self.hotkey_recorder = hotkey_recorder
+        self.on_hotkeys_changed = on_hotkeys_changed
         self._httpd: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -119,6 +126,7 @@ class DashboardServer:
 
     def start(self) -> int:
         controller = self.controller
+        server = self
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *args) -> None:  # quiet
@@ -201,7 +209,20 @@ class DashboardServer:
                 elif url.path == "/api/settings":
                     self._apply_settings_patch(data)
                     controller.config.save()
+                    if "hotkeys" in data and server.on_hotkeys_changed:
+                        try:
+                            server.on_hotkeys_changed()
+                        except Exception:
+                            pass  # next daemon restart picks them up anyway
                     self._send(controller.config.to_dict())
+                elif url.path == "/api/hotkeys/record":
+                    combo = None
+                    if server.hotkey_recorder is not None:
+                        try:
+                            combo = server.hotkey_recorder()
+                        except Exception:
+                            combo = None
+                    self._send({"combo": combo})
                 elif url.path == "/api/history/delete":
                     if data.get("all"):
                         controller.history.clear()

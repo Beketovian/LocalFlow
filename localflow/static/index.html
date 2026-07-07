@@ -240,12 +240,15 @@ button.x:hover { color: var(--accent); opacity: 1; }
 
     <h2>Hotkeys</h2>
     <div class="set-card">
-      <div class="set-row"><div class="l"><b>Push to talk</b><small>Hold to dictate, release to insert</small></div>
-        <input type="text" id="hkPtt" style="width:220px"></div>
+      <div class="set-row"><div class="l"><b>Push to talk</b><small>Hold to dictate, release to insert. "&lt;fn&gt;" = the fn/globe key</small></div>
+        <div style="display:flex;gap:6px"><input type="text" id="hkPtt" style="width:160px">
+          <button data-rec="push_to_talk" data-field="hkPtt">Record</button></div></div>
       <div class="set-row"><div class="l"><b>Hands-free toggle</b><small>Auto-stops when you pause</small></div>
-        <input type="text" id="hkToggle" style="width:220px"></div>
+        <div style="display:flex;gap:6px"><input type="text" id="hkToggle" style="width:160px">
+          <button data-rec="toggle_dictation" data-field="hkToggle">Record</button></div></div>
       <div class="set-row"><div class="l"><b>Command mode</b><small>Edit copied text by voice</small></div>
-        <input type="text" id="hkCmd" style="width:220px"></div>
+        <div style="display:flex;gap:6px"><input type="text" id="hkCmd" style="width:160px">
+          <button data-rec="command_mode" data-field="hkCmd">Record</button></div></div>
     </div>
 
     <h2>Formatting</h2>
@@ -403,6 +406,26 @@ function buildSettings() {
   $('hkCmd').onchange = () => save({ hotkeys: { command_mode: $('hkCmd').value } });
   $('outMethod').onchange = () => save({ output: { method: $('outMethod').value } });
   $('sndFeedback').onchange = () => save({ audio: { feedback_sounds: $('sndFeedback').checked } });
+  document.querySelectorAll('[data-rec]').forEach(btn => {
+    btn.onclick = async () => {
+      const field = $(btn.dataset.field), prev = field.value;
+      btn.disabled = true; btn.innerText = '…';
+      field.value = 'press keys now';
+      try {
+        const r = await jf('/api/hotkeys/record', { method: 'POST', body: '{}' });
+        if (r.combo) {
+          field.value = r.combo;
+          await save({ hotkeys: { [btn.dataset.rec]: r.combo } });
+          if (btn.dataset.rec === 'push_to_talk') applyHint();
+          toast('Hotkey set: ' + r.combo);
+        } else {
+          field.value = prev;
+          toast('No keys pressed');
+        }
+      } catch (e) { field.value = prev; }
+      btn.disabled = false; btn.innerText = 'Record';
+    };
+  });
   $('llmEnabled').onchange = () => save({ llm: { enabled: $('llmEnabled').checked } });
   $('llmCmd').onchange = () => save({ llm: { command_mode: $('llmCmd').checked } });
   $('llmModel').onchange = () => save({ llm: { model: $('llmModel').value } }).then(loadLLMStatus);
