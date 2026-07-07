@@ -51,6 +51,18 @@ def synth_speech(text: str, out_path: Path, speed: int = 140) -> np.ndarray:
 
 
 @pytest.fixture(autouse=True)
+def _isolate_user_files(monkeypatch, tmp_path):
+    """Tests must NEVER touch the real ~/.config/localflow or data dir.
+
+    A dashboard test once saved a default config over a real user's
+    config.json (wiping their dictionary and turning history off). All
+    config/data paths now resolve into a per-test temp dir.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+
+@pytest.fixture(autouse=True)
 def _no_local_llm_autoprobe(monkeypatch):
     """Keep tests hermetic on machines with a real local-LLM setup.
 

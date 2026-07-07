@@ -41,8 +41,19 @@ def models_dir(config: Optional[Config] = None) -> Path:
     return d
 
 
+def validate_model_name(name: str) -> str:
+    """Model names are URL/path components; reject anything decorative
+    (a UI once leaked a checkmark suffix into the config)."""
+    import re
+
+    cleaned = name.strip()
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", cleaned):
+        raise ValueError(f"invalid model name: {name!r}")
+    return cleaned
+
+
 def ggml_model_path(name: str, config: Optional[Config] = None) -> Path:
-    return models_dir(config) / f"ggml-{name}.bin"
+    return models_dir(config) / f"ggml-{validate_model_name(name)}.bin"
 
 
 def download_ggml_model(name: str, config: Optional[Config] = None, quiet: bool = False,

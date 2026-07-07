@@ -218,7 +218,7 @@ def cmd_run(args) -> int:
     # Whisper model switching is self-sufficient: changing the model in the
     # dashboard downloads it if needed (with progress) and hot-swaps the
     # engine when the daemon is idle - no restart.
-    engine_state = {"switching": False, "message": ""}
+    engine_state = {"switching": False, "message": "", "progress": None}
 
     def engine_status() -> dict:
         return dict(engine_state)
@@ -238,10 +238,12 @@ def cmd_run(args) -> int:
                         f"downloading {config.engine.model}..."
 
                 def prog(frac: float) -> None:
+                    engine_state["progress"] = frac
                     engine_state["message"] = \
                         f"downloading {config.engine.model}... {frac:.0%}"
 
                 new_engine = create_engine(config, progress=prog)
+                engine_state["progress"] = None
                 engine_state["message"] = f"loading {config.engine.model}..."
                 for _ in range(600):  # wait for idle to swap safely
                     if controller.state.status == "idle":
@@ -261,6 +263,7 @@ def cmd_run(args) -> int:
                 print(f"  ! model switch failed: {exc!r}")
             finally:
                 engine_state["switching"] = False
+                engine_state["progress"] = None
 
         threading.Thread(target=worker, daemon=True).start()
 

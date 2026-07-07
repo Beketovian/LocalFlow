@@ -112,6 +112,12 @@ button.x:hover { color: var(--accent); opacity: 1; }
 .row { display: flex; gap: 10px; margin: 12px 0; flex-wrap: wrap; align-items: center; }
 .row input[type=text], .row input[type=search] { flex: 1; }
 
+.dlbar { height: 4px; background: var(--line); border-radius: 2px;
+  margin: 8px 0 4px; overflow: hidden; max-width: 280px; }
+#engBarFill { height: 100%; width: 0%; background: var(--accent);
+  transition: width .4s; }
+.confirm-row { background: var(--panel); border-radius: 12px; }
+
 .raw { margin-top: 8px; padding: 8px 10px; background: var(--panel);
   border-radius: 8px; font-size: 12.5px; color: var(--ink-2); }
 .raw > div { margin: 2px 0; }
@@ -244,11 +250,19 @@ button.rawbtn { font-size: 11px; padding: 1px 4px; }
           <option value="ja">Japanese</option><option value="zh">Chinese</option>
           <option value="ko">Korean</option><option value="hi">Hindi</option>
         </select></div>
-      <div class="set-row"><div class="l"><b>Model</b><small>Bigger = more accurate, slower. Switching downloads &amp; applies live (large-v3 &asymp; 3 GB). <span id="engStatus" style="color:var(--accent)"></span></small></div>
+      <div class="set-row"><div class="l"><b>Model</b><small id="engHint">Bigger = more accurate, slower. Switches apply live.</small>
+          <div class="dlbar" id="engBar" hidden><div id="engBarFill"></div></div>
+          <small id="engStatus" style="color:var(--accent)"></small></div>
         <select id="engModel">
-          <option>tiny</option><option>base</option><option>small</option>
-          <option>medium</option><option>large-v3</option>
+          <option value="tiny">tiny</option><option value="base">base</option>
+          <option value="small">small</option><option value="medium">medium</option>
+          <option value="large-v3">large-v3</option>
         </select></div>
+      <div class="set-row confirm-row" id="engConfirm" hidden>
+        <div class="l"><b id="engConfirmTitle">Download model?</b><small id="engConfirmSub"></small></div>
+        <div style="display:flex;gap:6px">
+          <button id="engDl">Download</button>
+          <button class="ghost" id="engCancel">Cancel</button></div></div>
     </div>
 
     <h2>Hotkeys</h2>
@@ -426,7 +440,7 @@ function buildSettings() {
   loadLLMStatus(); loadMics();
   $('userName').onchange = () => save({ user_name: $('userName').value }).then(applyGreeting);
   $('engLang').onchange = () => save({ engine: { language: $('engLang').value } });
-  $('engModel').onchange = () => save({ engine: { model: $('engModel').value } }).then(() => refreshEngine(true));
+  $('engModel').onchange = onModelPicked;
   refreshEngine();
   $('hkPtt').onchange = () => save({ hotkeys: { push_to_talk: $('hkPtt').value } }).then(applyHint);
   $('hkToggle').onchange = () => save({ hotkeys: { toggle_dictation: $('hkToggle').value } });
@@ -458,16 +472,55 @@ function buildSettings() {
   $('llmModel').onchange = () => save({ llm: { model: $('llmModel').value } }).then(loadLLMStatus);
   $('llmUrl').onchange = () => save({ llm: { base_url: $('llmUrl').value.trim() || 'auto' } }).then(loadLLMStatus);
 }
-async function refreshEngine(watch = false) {
+const MODEL_SIZES = { tiny: '78 MB', base: '148 MB', small: '488 MB',
+                      medium: '1.5 GB', 'large-v3': '3.1 GB' };
+let engDownloaded = [];
+
+async function refreshEngine() {
   try {
     const s = await jf('/api/engine');
+    engDownloaded = s.downloaded || [];
     [...$('engModel').options].forEach(o => {
-      o.text = o.value + ((s.downloaded || []).includes(o.value) ? ' ✓' : '');
+      o.text = o.value + (engDownloaded.includes(o.value) ? ' ✓' : ` — ${MODEL_SIZES[o.value] || ''}`);
     });
-    $('engStatus').innerText = s.switching ? (s.message || 'switching…') : '';
-    if (s.switching) setTimeout(() => refreshEngine(true), 1000);
-    else if (watch && s.message) { toast(s.message); refreshEngine(); }
+    if (s.switching) watchEngine();
   } catch (e) {}
+}
+
+function onModelPicked() {
+  const m = $('engModel').value;
+  $('engConfirm').hidden = true;
+  if (engDownloaded.includes(m)) {
+    save({ engine: { model: m } }).then(watchEngine);
+    return;
+  }
+  $('engConfirmTitle').innerText = `Download ${m}?`;
+  $('engConfirmSub').innerText =
+    `One-time ${MODEL_SIZES[m] || ''} download. Dictation keeps working on the ` +
+    `current model and switches automatically when ready.`;
+  $('engConfirm').hidden = false;
+  $('engDl').onclick = () => {
+    $('engConfirm').hidden = true;
+    save({ engine: { model: m } }).then(watchEngine);
+  };
+  $('engCancel').onclick = () => {
+    $('engConfirm').hidden = true;
+    $('engModel').value = CONFIG.engine.model;
+  };
+}
+
+async function watchEngine() {
+  try {
+    const s = await jf('/api/engine');
+    $('engStatus').innerText = s.switching ? (s.message || 'switching…') : '';
+    const pct = s.progress;
+    $('engBar').hidden = !(s.switching && pct != null);
+    if (pct != null) $('engBarFill').style.width = Math.round(pct * 100) + '%';
+    if (s.switching) { setTimeout(watchEngine, 800); return; }
+    $('engBar').hidden = true;
+    if (s.message) toast(s.message);
+    refreshEngine();
+  } catch (e) { $('engBar').hidden = true; }
 }
 async function loadMics() {
   try {
