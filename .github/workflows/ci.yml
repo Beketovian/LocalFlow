@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install espeak-ng (test speech synthesis)
+        run: sudo apt-get update && sudo apt-get install -y espeak-ng
+
+      - name: Install package
+        run: pip install -e ".[dev,whispercpp]"
+
+      - name: Cache Whisper model
+        id: model-cache
+        uses: actions/cache@v4
+        with:
+          path: tests/models
+          key: ggml-tiny-v1
+
+      - name: Download Whisper tiny model
+        if: steps.model-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p tests/models
+          curl -L --retry 3 -o tests/models/ggml-tiny.bin \
+            https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin
+
+      - name: Run tests (unit + real-model integration)
+        run: pytest -v

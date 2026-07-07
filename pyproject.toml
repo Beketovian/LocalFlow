@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "localflow"
+version = "1.0.0"
+description = "LocalFlow - a fully local, open-source voice dictation app (Wispr Flow clone) powered by Whisper"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "LocalFlow contributors" }]
+keywords = ["dictation", "whisper", "speech-to-text", "voice", "wispr-flow"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+dependencies = [
+    "numpy>=1.22",
+]
+
+[project.optional-dependencies]
+# STT engines - install at least one
+whispercpp = ["pywhispercpp>=1.2"]
+fasterwhisper = ["faster-whisper>=1.0"]
+# Desktop integration (microphone, global hotkeys, tray icon)
+desktop = [
+    "sounddevice>=0.4",
+    "pynput>=1.7",
+    "pystray>=0.19",
+    "Pillow>=9.0",
+    "pyperclip>=1.8",
+    # macOS: native dashboard window (WKWebView); skipped elsewhere
+    'pyobjc-framework-WebKit>=9.0; sys_platform == "darwin"',
+]
+# In-process AI formatting via Apple MLX (no LM Studio/Ollama required)
+llm = [
+    'mlx-lm>=0.31; sys_platform == "darwin"',
+    'transformers<5; sys_platform == "darwin"',
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-timeout>=2.1",
+]
+full = [
+    "localflow[whispercpp,fasterwhisper,desktop,llm]",
+]
+
+[project.scripts]
+localflow = "localflow.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["localflow*"]
+
+[tool.setuptools.package-data]
+localflow = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+timeout = 600
+markers = [
+    "integration: end-to-end tests that need a real Whisper model (auto-skipped if unavailable)",
+]
