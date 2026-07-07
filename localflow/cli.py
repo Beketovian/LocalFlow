@@ -169,6 +169,20 @@ def cmd_run(args) -> int:
 
     config = _load_config(args)
 
+    # Self-repair: a decorated/corrupt model name in the config must never
+    # prevent startup (a UI bug once persisted "medium ✓").
+    import re as _re
+    from .engines.registry import validate_model_name
+
+    try:
+        validate_model_name(config.engine.model)
+    except ValueError:
+        repaired = _re.sub(r"[^A-Za-z0-9._-]", "", config.engine.model) or "base"
+        print(f"  ! invalid engine.model {config.engine.model!r} "
+              f"- repaired to {repaired!r}")
+        config.engine.model = repaired
+        config.save()
+
     lock = _acquire_daemon_lock(config)
     if lock is None:
         return 1

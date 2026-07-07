@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -303,6 +304,12 @@ class DashboardServer:
                 accepted; value types must match the current value's type.
                 """
                 cfg = controller.config
+                if isinstance(patch.get("engine"), dict) \
+                        and isinstance(patch["engine"].get("model"), str):
+                    # model names become URLs/paths; strip any decoration a
+                    # client may have leaked (e.g. a "✓" suffix)
+                    patch["engine"]["model"] = re.sub(
+                        r"[^A-Za-z0-9._-]", "", patch["engine"]["model"])
                 for key, value in patch.items():
                     if key == "user_name" and isinstance(value, str):
                         cfg.user_name = value
