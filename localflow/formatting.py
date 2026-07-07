@@ -350,6 +350,26 @@ def format_transcript(
     return text
 
 
+# ------------------------------------------------------------- voice actions
+
+# "... send it" at the very end of a dictation -> paste, then press Enter.
+# Deliberately strict: only explicit forms, only at the end, so sentences
+# that merely *mention* sending never trigger ("what did he send" is safe).
+_SEND_RE = re.compile(
+    r"(?:^|[\s,;:.!?])(?:and\s+|then\s+)?send\s+(?:it|that|this|now|(?:the\s+)?message)"
+    r"[\s.!?]*$",
+    re.IGNORECASE,
+)
+
+
+def detect_send_command(text: str) -> tuple:
+    """Return (text_without_command, should_send)."""
+    m = _SEND_RE.search(text)
+    if not m:
+        return text, False
+    return text[: m.start()].rstrip(" ,;:.!?") or "", True
+
+
 def smart_join(previous: str, new: str) -> str:
     """Join freshly dictated text onto previously injected text.
 

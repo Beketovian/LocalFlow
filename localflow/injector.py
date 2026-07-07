@@ -215,6 +215,25 @@ class MacPasteInjector(Injector):
         except Exception:
             pass  # best effort - paste still goes to whatever is frontmost
 
+    def press_return(self) -> None:
+        """Press Enter in the target app (voice action: '... send it')."""
+        self._ensure_target_focus()
+        try:
+            import Quartz
+
+            src = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
+            for down in (True, False):
+                event = Quartz.CGEventCreateKeyboardEvent(src, 36, down)  # kVK_Return
+                Quartz.CGEventSetFlags(event, 0)
+                Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+                time.sleep(0.01)
+        except Exception:
+            from pynput.keyboard import Controller, Key
+
+            kb = Controller()
+            kb.press(Key.enter)
+            kb.release(Key.enter)
+
     def inject(self, text: str) -> None:
         self._ensure_target_focus()
         old = self._read_clipboard() if self.restore else None

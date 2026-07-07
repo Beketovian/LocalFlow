@@ -166,6 +166,20 @@ class DashboardServer:
                         "words": controller.dictionary.words,
                         "replacements": controller.dictionary.replacements,
                     })
+                elif url.path == "/api/dictionary/suggestions":
+                    suggestions = []
+                    if controller.config.suggest_dictionary:
+                        from .dictionary import mine_suggestions
+
+                        entries = controller.history.recent(300)
+                        known = (controller.dictionary.words
+                                 + list(controller.dictionary.replacements))
+                        suggestions = [
+                            {"word": w, "count": c}
+                            for w, c in mine_suggestions(
+                                (e.formatted_text for e in entries), known)
+                        ]
+                    self._send({"suggestions": suggestions})
                 elif url.path == "/api/engine":
                     from .engines.registry import models_dir
 
@@ -292,6 +306,9 @@ class DashboardServer:
                 for key, value in patch.items():
                     if key == "user_name" and isinstance(value, str):
                         cfg.user_name = value
+                    elif key in ("live_preview", "suggest_dictionary",
+                                 "save_history") and isinstance(value, bool):
+                        setattr(cfg, key, value)
                     elif isinstance(value, dict) and hasattr(cfg, key):
                         section = getattr(cfg, key)
                         if not dataclasses.is_dataclass(section):

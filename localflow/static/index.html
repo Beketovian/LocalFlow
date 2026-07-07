@@ -222,6 +222,11 @@ button.rawbtn { font-size: 11px; padding: 1px 4px; }
     <p class="sub">Names and jargon Flow should always get right.</p>
     <div class="row"><input type="text" id="newWord" placeholder="Add a word, name or acronym&hellip;"><button id="addWord">Add</button></div>
     <div class="chips" id="words"></div>
+    <div id="suggestBlock" hidden>
+      <h2>Suggested from your dictations</h2>
+      <p class="sub" style="margin-bottom:10px">Names you say often - click to add.</p>
+      <div class="chips" id="suggestions"></div>
+    </div>
     <h2>Text replacements</h2>
     <p class="sub" style="margin-bottom:10px">Say the phrase on the left, get the text on the right.</p>
     <div class="row">
@@ -276,6 +281,16 @@ button.rawbtn { font-size: 11px; padding: 1px 4px; }
       <div class="set-row"><div class="l"><b>Command mode</b><small>Edit copied text by voice</small></div>
         <div style="display:flex;gap:6px"><input type="text" id="hkCmd" style="width:160px">
           <button data-rec="command_mode" data-field="hkCmd">Record</button></div></div>
+    </div>
+
+    <h2>Behavior</h2>
+    <div class="set-card">
+      <div class="set-row"><div class="l"><b>Voice actions</b><small>End a dictation with &ldquo;send it&rdquo; to press Enter after the paste</small></div>
+        <label class="switch"><input type="checkbox" id="voiceSend"><span class="slider"></span></label></div>
+      <div class="set-row"><div class="l"><b>Live transcript</b><small>Words appear in the recording pill while you speak</small></div>
+        <label class="switch"><input type="checkbox" id="livePreview"><span class="slider"></span></label></div>
+      <div class="set-row"><div class="l"><b>Dictionary suggestions</b><small>Learn recurring names from your history and suggest adding them</small></div>
+        <label class="switch"><input type="checkbox" id="suggestDict"><span class="slider"></span></label></div>
     </div>
 
     <h2>Formatting</h2>
@@ -393,6 +408,18 @@ async function loadDict() {
   $('repls').innerHTML = Object.entries(d.replacements).map(([k, v]) =>
     `<span class="chip">&ldquo;${esc(k)}&rdquo; &rarr; ${esc(v)}<button class="x" onclick="dictOp({remove_replacement:'${esc(k)}'})">&#10005;</button></span>`
   ).join('') || '<span class="empty" style="padding:8px">No replacements yet</span>';
+  loadSuggestions();
+}
+async function loadSuggestions() {
+  try {
+    const s = await jf('/api/dictionary/suggestions');
+    const items = s.suggestions || [];
+    $('suggestBlock').hidden = items.length === 0;
+    $('suggestions').innerHTML = items.map(i =>
+      `<span class="chip">${esc(i.word)} <span style="opacity:.55">×${i.count}</span>
+        <button class="x" title="Add to dictionary" style="color:var(--accent)"
+          onclick="dictOp({add:'${esc(i.word)}'})">+</button></span>`).join('');
+  } catch (e) { $('suggestBlock').hidden = true; }
 }
 async function dictOp(payload) {
   await jf('/api/dictionary', { method: 'POST', body: JSON.stringify(payload) });
@@ -434,6 +461,12 @@ function buildSettings() {
   $('hkCmd').value = CONFIG.hotkeys.command_mode;
   $('outMethod').value = CONFIG.output.method;
   $('sndFeedback').checked = !!CONFIG.audio.feedback_sounds;
+  $('voiceSend').checked = !!CONFIG.output.voice_send;
+  $('livePreview').checked = !!CONFIG.live_preview;
+  $('suggestDict').checked = !!CONFIG.suggest_dictionary;
+  $('voiceSend').onchange = () => save({ output: { voice_send: $('voiceSend').checked } });
+  $('livePreview').onchange = () => save({ live_preview: $('livePreview').checked });
+  $('suggestDict').onchange = () => save({ suggest_dictionary: $('suggestDict').checked });
   $('llmEnabled').checked = !!CONFIG.llm?.enabled;
   $('llmCmd').checked = !!CONFIG.llm?.command_mode;
   $('llmUrl').value = CONFIG.llm?.base_url || 'auto';

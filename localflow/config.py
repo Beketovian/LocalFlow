@@ -145,6 +145,9 @@ class OutputConfig:
     # Restore previous clipboard contents after clipboard-paste injection
     restore_clipboard: bool = True
     trailing_space: bool = True
+    # Voice actions: ending a dictation with "send it" presses Enter after
+    # the paste (great for chat apps)
+    voice_send: bool = True
 
 
 @dataclass
@@ -226,6 +229,10 @@ class Config:
     replacements: Dict[str, str] = field(default_factory=dict)
     # Store history in SQLite (set False for fully ephemeral use)
     save_history: bool = True
+    # Live transcript in the recording pill while you speak (macOS)
+    live_preview: bool = True
+    # Mine history for recurring names/jargon and suggest dictionary adds
+    suggest_dictionary: bool = True
     data_dir: Optional[str] = None
     # Shown in the dashboard greeting ("Good morning, ...")
     user_name: str = ""
@@ -264,7 +271,8 @@ class Config:
                     if hasattr(prof, key):
                         setattr(prof, key, value)
                 cfg.profiles.append(prof)
-        for key in ("dictionary", "replacements", "save_history", "data_dir", "user_name"):
+        for key in ("dictionary", "replacements", "save_history", "live_preview",
+                    "suggest_dictionary", "data_dir", "user_name"):
             if key in data:
                 setattr(cfg, key, data[key])
         return cfg

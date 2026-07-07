@@ -74,6 +74,41 @@ open /Applications/LocalFlow.app
 * The app launches the daemon from this repo's `venv` - rebuild after moving
   the repo.
 
+## Developing on it
+
+The app loads code straight from this repo (default builds), so the loop is:
+
+```bash
+# edit code, then:
+venv/bin/python -m pytest tests/ -q     # 200+ tests, fully hermetic
+pkill -f localflow.cli && open /Applications/LocalFlow.app   # restart to apply
+tail -f ~/Library/Logs/LocalFlow.log    # watch it live
+```
+
+Or run `venv/bin/localflow run -v` in a terminal for interactive logs with
+per-dictation timing. Only `scripts/build_app.sh` changes (stub/plist/icon)
+need a rebuild - which re-signs the bundle, so macOS asks for Accessibility
+again once.
+
+## Giving it to a friend
+
+```bash
+./scripts/build_app.sh --standalone    # code + all deps inside the bundle
+zip -ry LocalFlow.zip dist/LocalFlow.app
+```
+
+On the friend's Mac (Apple Silicon):
+
+1. `brew install python@3.13` (the bundle carries its own deps but uses the
+   system Python framework).
+2. Unzip, drag LocalFlow.app to /Applications, then **right-click → Open**
+   (unsigned app; one-time Gatekeeper override) - or run
+   `xattr -dr com.apple.quarantine /Applications/LocalFlow.app`.
+3. Grant Microphone / Accessibility / Input Monitoring when prompted.
+4. Whisper models download automatically from the Settings model picker; for
+   AI formatting they run LM Studio/Ollama, or grab the built-in model with
+   `/Applications/LocalFlow.app/Contents/MacOS/LocalFlow -m localflow.cli llm download`.
+
 ## Usage (terminal)
 
 ```bash

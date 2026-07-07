@@ -221,3 +221,43 @@ class TestBlankAudio:
         assert event.injected is False
         assert injector.received == []
         assert controller.history.recent(10) == []
+
+
+class SendCapableInjector(CallbackInjector):
+    def __init__(self):
+        super().__init__()
+        self.returns_pressed = 0
+
+    def press_return(self):
+        self.returns_pressed += 1
+
+
+class TestVoiceActions:
+    def test_send_it_presses_return(self):
+        controller, _, _ = make_controller(["See you at six, send it"])
+        injector = SendCapableInjector()
+        controller.injector = injector
+        controller.start_recording()
+        event = controller.stop_recording()
+        assert event.formatted_text == "See you at six"
+        assert injector.received == ["See you at six "]
+        assert injector.returns_pressed == 1
+        assert event.auto_sent is True
+
+    def test_toggle_off_keeps_text(self):
+        controller, _, _ = make_controller(["See you at six, send it"])
+        controller.config.output.voice_send = False
+        injector = SendCapableInjector()
+        controller.injector = injector
+        controller.start_recording()
+        event = controller.stop_recording()
+        assert "send it" in event.formatted_text.lower()
+        assert injector.returns_pressed == 0
+        assert event.auto_sent is False
+
+    def test_plain_injector_no_send(self):
+        controller, _, injector = make_controller(["hello there, send it"])
+        controller.start_recording()
+        event = controller.stop_recording()
+        assert event.auto_sent is False  # injector lacks press_return
+        assert injector.received == ["Hello there "]
