@@ -33,7 +33,7 @@ While you dictate, the floating pill shows a live waveform, then pulses while Wh
 
 ```bash
 # from a clone of this repo
-pip install -e ".[whispercpp,desktop]"      # whisper.cpp engine (light, CPU-friendly)
+pip install -e ".[whispercpp,desktop,llm]"  # whisper.cpp engine + in-process AI formatting
 # and/or
 pip install -e ".[fasterwhisper,desktop]"   # faster-whisper engine (best accuracy)
 
@@ -60,7 +60,9 @@ open /Applications/LocalFlow.app
 ```
 
 * Menu bar icon shows status (◎ idle / ◉ recording / ◌ formatting) with
-  Open Dashboard, Hands-free Mode and Quit.
+  Open Dashboard, Hands-free Mode and Quit. The dashboard opens as a native
+  app window (WKWebView), not a browser tab.
+* `localflow autostart on` starts the app at login (`off` to remove).
 * The AI-formatting model runs **in-process** (Apple MLX). If LM Studio or
   Ollama happens to be running, LocalFlow uses that server instead; close it
   and the built-in engine takes over automatically. No weights yet?

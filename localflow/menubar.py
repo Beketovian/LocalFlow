@@ -67,6 +67,7 @@ class MacMenuBar:
         dashboard_url: Optional[str],
         on_quit: Callable[[], None],
         on_toggle_hands_free: Optional[Callable[[], None]] = None,
+        on_dashboard: Optional[Callable[[], None]] = None,
     ) -> None:
         if sys.platform != "darwin":
             raise RuntimeError("menu bar is macOS-only")
@@ -83,9 +84,11 @@ class MacMenuBar:
         self._pending: "queue.Queue[str]" = queue.Queue()
         self._hands_free_on = False
 
+        if on_dashboard is None and dashboard_url:
+            on_dashboard = lambda: webbrowser.open(dashboard_url)  # noqa: E731
         self._target = _target_class().alloc().init()
         self._target.callbacks = {
-            "dashboard": (lambda: webbrowser.open(dashboard_url)) if dashboard_url else None,
+            "dashboard": on_dashboard,
             "hands_free": on_toggle_hands_free,
             "quit": on_quit,
         }
@@ -103,7 +106,7 @@ class MacMenuBar:
         menu.addItem_(title)
         menu.addItem_(NSMenuItem.separatorItem())
 
-        if dashboard_url:
+        if self._target.callbacks["dashboard"]:
             item = NSMenuItem.alloc().initWithTitle_action_keyEquivalent_(
                 "Open Dashboard", "openDashboard:", "")
             item.setTarget_(self._target)

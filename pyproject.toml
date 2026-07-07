@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "localflow"
-version = "0.1.0"
+version = "1.0.0"
 description = "LocalFlow - a fully local, open-source voice dictation app (Wispr Flow clone) powered by Whisper"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -30,13 +30,20 @@ desktop = [
     "pystray>=0.19",
     "Pillow>=9.0",
     "pyperclip>=1.8",
+    # macOS: native dashboard window (WKWebView); skipped elsewhere
+    'pyobjc-framework-WebKit>=9.0; sys_platform == "darwin"',
+]
+# In-process AI formatting via Apple MLX (no LM Studio/Ollama required)
+llm = [
+    'mlx-lm>=0.31; sys_platform == "darwin"',
+    'transformers<5; sys_platform == "darwin"',
 ]
 dev = [
     "pytest>=7.0",
     "pytest-timeout>=2.1",
 ]
 full = [
-    "localflow[whispercpp,fasterwhisper,desktop]",
+    "localflow[whispercpp,fasterwhisper,desktop,llm]",
 ]
 
 [project.scripts]

@@ -228,8 +228,17 @@ def cmd_run(args) -> int:
                   "model, or start LM Studio/Ollama)")
 
     if sys.platform == "darwin" and os.environ.get("LOCALFLOW_APP"):
-        # Running as LocalFlow.app: use the system prompt that sends the
-        # user straight to Privacy & Security -> Accessibility on first run.
+        # Rotate the app log when it gets big. The stub's file handle
+        # follows the renamed file for the rest of this session; the next
+        # launch starts a fresh log.
+        try:
+            log = Path.home() / "Library" / "Logs" / "LocalFlow.log"
+            if log.exists() and log.stat().st_size > 5 * 1024 * 1024:
+                log.replace(log.with_suffix(".old.log"))
+        except OSError:
+            pass
+        # Use the system prompt that sends the user straight to
+        # Privacy & Security -> Accessibility on first run.
         try:
             import ApplicationServices as AppServices
 
@@ -387,11 +396,24 @@ def cmd_run(args) -> int:
                 stop_event.set()
                 overlay.stop()  # ends run_forever -> cmd_run's finally
 
+            # Dashboard opens in a native window (WKWebView) when possible;
+            # menu actions run on the main thread, so showing it directly is
+            # safe. Falls back to the browser without WebKit.
+            on_dashboard = None
+            if url:
+                try:
+                    from .appwindow import DashboardWindow
+
+                    on_dashboard = DashboardWindow(url).show
+                except Exception:
+                    pass  # MacMenuBar falls back to webbrowser.open
+
             bar = MacMenuBar(
                 version=__version__,
                 dashboard_url=url,
                 on_quit=quit_app,
                 on_toggle_hands_free=lambda: actions.put(toggle),
+                on_dashboard=on_dashboard,
             )
             bar.attach(overlay)
             controller.on_status(bar.set_status)
@@ -616,6 +638,41 @@ def cmd_llm(args) -> int:
     return 0
 
 
+def cmd_autostart(args) -> int:
+    """Start LocalFlow.app at login via a LaunchAgent (macOS)."""
+    if sys.platform != "darwin":
+        print("autostart is macOS-only for now")
+        return 1
+    agent = Path.home() / "Library" / "LaunchAgents" / "dev.localflow.app.plist"
+    app = Path("/Applications/LocalFlow.app")
+    if args.action == "on":
+        if not app.exists():
+            print("Install the app first: ./scripts/build_app.sh --install")
+            return 1
+        agent.parent.mkdir(parents=True, exist_ok=True)
+        agent.write_text(f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key><string>dev.localflow.app</string>
+    <key>ProgramArguments</key>
+    <array><string>/usr/bin/open</string><string>-ga</string><string>{app}</string></array>
+    <key>RunAtLoad</key><true/>
+</dict>
+</plist>
+""")
+        print(f"LocalFlow will start at login ({agent})")
+    elif args.action == "off":
+        if agent.exists():
+            agent.unlink()
+            print("autostart disabled")
+        else:
+            print("autostart was not enabled")
+    else:
+        print("autostart:", "on" if agent.exists() else "off")
+    return 0
+
+
 def cmd_doctor(args) -> int:
     import importlib.util
 
@@ -717,6 +774,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("action", choices=["status", "download"], nargs="?",
                    default="status")
     p.set_defaults(func=cmd_llm)
+
+    p = sub.add_parser("autostart", help="start LocalFlow.app at login (macOS)")
+    p.add_argument("action", choices=["on", "off", "status"], nargs="?",
+                   default="status")
+    p.set_defaults(func=cmd_autostart)
 
     p = sub.add_parser("doctor", help="diagnose the installation")
     p.set_defaults(func=cmd_doctor)
