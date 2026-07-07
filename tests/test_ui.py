@@ -240,3 +240,59 @@ class TestHotkeyRecording:
         # non-hotkey patches don't churn the listener
         self._post("/api/settings", {"formatting": {"remove_fillers": True}})
         assert rebuilds == [1]
+
+
+class TestEngineSwitching:
+    def teardown_method(self):
+        if hasattr(self, "server"):
+            self.server.stop()
+
+    def _post(self, path, payload):
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}{path}",
+            data=json.dumps(payload).encode(), method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read())
+
+    def _get(self, path):
+        with urllib.request.urlopen(
+                f"http://127.0.0.1:{self.port}{path}", timeout=5) as resp:
+            return json.loads(resp.read())
+
+    def test_engine_endpoint_reports_status(self, tmp_path):
+        controller = make_controller()
+        controller.config.data_dir = str(tmp_path)  # empty models dir
+        self.server = DashboardServer(controller, port=0)
+        self.server.engine_status = lambda: {"switching": True,
+                                             "message": "downloading small... 42%"}
+        self.port = self.server.start()
+        s = self._get("/api/engine")
+        assert s["switching"] is True
+        assert "42%" in s["message"]
+        assert s["downloaded"] == []
+
+    def test_engine_endpoint_lists_downloaded(self, tmp_path):
+        controller = make_controller()
+        controller.config.data_dir = str(tmp_path)
+        models = tmp_path / "models"
+        models.mkdir(parents=True)
+        (models / "ggml-small.bin").write_bytes(b"x")
+        (models / "ggml-base.bin").write_bytes(b"x")
+        self.server = DashboardServer(controller, port=0)
+        self.port = self.server.start()
+        assert self._get("/api/engine")["downloaded"] == ["base", "small"]
+
+    def test_engine_patch_triggers_switch(self, tmp_path, monkeypatch):
+        controller = make_controller()
+        monkeypatch.setattr(controller.config, "save",
+                            lambda path=None: tmp_path / "c.json")
+        switches = []
+        self.server = DashboardServer(controller, port=0)
+        self.server.on_engine_changed = lambda: switches.append(
+            controller.config.engine.model)
+        self.port = self.server.start()
+        self._post("/api/settings", {"engine": {"model": "large-v3"}})
+        assert switches == ["large-v3"]
+        self._post("/api/settings", {"formatting": {"remove_fillers": True}})
+        assert switches == ["large-v3"]  # unrelated patches don't switch

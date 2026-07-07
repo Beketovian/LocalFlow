@@ -121,6 +121,8 @@ class DashboardServer:
         self.hotkey_recorder = hotkey_recorder
         self.on_hotkeys_changed = on_hotkeys_changed
         self.on_audio_changed = None
+        self.on_engine_changed = None
+        self.engine_status = None  # () -> {"switching": bool, "message": str}
         self._httpd: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -164,6 +166,25 @@ class DashboardServer:
                         "words": controller.dictionary.words,
                         "replacements": controller.dictionary.replacements,
                     })
+                elif url.path == "/api/engine":
+                    from .engines.registry import models_dir
+
+                    downloaded = sorted(
+                        p.name[len("ggml-"):-len(".bin")]
+                        for p in models_dir(controller.config).glob("ggml-*.bin")
+                    )
+                    payload = {
+                        "model": controller.config.engine.model,
+                        "downloaded": downloaded,
+                        "switching": False,
+                        "message": "",
+                    }
+                    if server.engine_status is not None:
+                        try:
+                            payload.update(server.engine_status())
+                        except Exception:
+                            pass
+                    self._send(payload)
                 elif url.path == "/api/audio/devices":
                     devices = []
                     try:
@@ -236,6 +257,11 @@ class DashboardServer:
                     if "audio" in data and server.on_audio_changed:
                         try:
                             server.on_audio_changed()
+                        except Exception:
+                            pass
+                    if "engine" in data and server.on_engine_changed:
+                        try:
+                            server.on_engine_changed()
                         except Exception:
                             pass
                     self._send(controller.config.to_dict())

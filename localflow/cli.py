@@ -215,6 +215,55 @@ def cmd_run(args) -> int:
             old.close()  # release the previous device's warm stream
             print(f"  microphone: {config.audio.input_device or 'system default'}")
 
+    # Whisper model switching is self-sufficient: changing the model in the
+    # dashboard downloads it if needed (with progress) and hot-swaps the
+    # engine when the daemon is idle - no restart.
+    engine_state = {"switching": False, "message": ""}
+
+    def engine_status() -> dict:
+        return dict(engine_state)
+
+    def apply_engine_settings() -> None:
+        if engine_state["switching"]:
+            return  # one switch at a time; the UI shows the current one
+        engine_state.update(switching=True,
+                            message=f"preparing {config.engine.model}...")
+
+        def worker() -> None:
+            from .engines.registry import create_engine, ggml_model_path
+
+            try:
+                if not ggml_model_path(config.engine.model, config).exists():
+                    engine_state["message"] = \
+                        f"downloading {config.engine.model}..."
+
+                def prog(frac: float) -> None:
+                    engine_state["message"] = \
+                        f"downloading {config.engine.model}... {frac:.0%}"
+
+                new_engine = create_engine(config, progress=prog)
+                engine_state["message"] = f"loading {config.engine.model}..."
+                for _ in range(600):  # wait for idle to swap safely
+                    if controller.state.status == "idle":
+                        break
+                    time.sleep(0.1)
+                old = controller._engine
+                controller._engine = new_engine
+                if old is not None:
+                    try:
+                        old.close()
+                    except Exception:
+                        pass
+                engine_state["message"] = f"{config.engine.model} active"
+                print(f"  engine switched: {config.engine.model}")
+            except Exception as exc:
+                engine_state["message"] = f"model switch failed: {exc}"
+                print(f"  ! model switch failed: {exc!r}")
+            finally:
+                engine_state["switching"] = False
+
+        threading.Thread(target=worker, daemon=True).start()
+
     if overlay_ok:
         def on_status(status: str) -> None:
             if status == "recording":
@@ -272,6 +321,8 @@ def cmd_run(args) -> int:
                 on_hotkeys_changed=lambda: rebuild_listener(),
             )
             dashboard.on_audio_changed = apply_audio_settings
+            dashboard.on_engine_changed = apply_engine_settings
+            dashboard.engine_status = engine_status
             port = dashboard.start()
             note = "" if port == config.dashboard.port else \
                 f"  (port {config.dashboard.port} was busy)"

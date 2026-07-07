@@ -244,7 +244,7 @@ button.rawbtn { font-size: 11px; padding: 1px 4px; }
           <option value="ja">Japanese</option><option value="zh">Chinese</option>
           <option value="ko">Korean</option><option value="hi">Hindi</option>
         </select></div>
-      <div class="set-row"><div class="l"><b>Model</b><small>Bigger models are more accurate, slower</small></div>
+      <div class="set-row"><div class="l"><b>Model</b><small>Bigger = more accurate, slower. Switching downloads &amp; applies live (large-v3 &asymp; 3 GB). <span id="engStatus" style="color:var(--accent)"></span></small></div>
         <select id="engModel">
           <option>tiny</option><option>base</option><option>small</option>
           <option>medium</option><option>large-v3</option>
@@ -426,7 +426,8 @@ function buildSettings() {
   loadLLMStatus(); loadMics();
   $('userName').onchange = () => save({ user_name: $('userName').value }).then(applyGreeting);
   $('engLang').onchange = () => save({ engine: { language: $('engLang').value } });
-  $('engModel').onchange = () => save({ engine: { model: $('engModel').value } });
+  $('engModel').onchange = () => save({ engine: { model: $('engModel').value } }).then(() => refreshEngine(true));
+  refreshEngine();
   $('hkPtt').onchange = () => save({ hotkeys: { push_to_talk: $('hkPtt').value } }).then(applyHint);
   $('hkToggle').onchange = () => save({ hotkeys: { toggle_dictation: $('hkToggle').value } });
   $('hkCmd').onchange = () => save({ hotkeys: { command_mode: $('hkCmd').value } });
@@ -456,6 +457,17 @@ function buildSettings() {
   $('llmCmd').onchange = () => save({ llm: { command_mode: $('llmCmd').checked } });
   $('llmModel').onchange = () => save({ llm: { model: $('llmModel').value } }).then(loadLLMStatus);
   $('llmUrl').onchange = () => save({ llm: { base_url: $('llmUrl').value.trim() || 'auto' } }).then(loadLLMStatus);
+}
+async function refreshEngine(watch = false) {
+  try {
+    const s = await jf('/api/engine');
+    [...$('engModel').options].forEach(o => {
+      o.text = o.value + ((s.downloaded || []).includes(o.value) ? ' ✓' : '');
+    });
+    $('engStatus').innerText = s.switching ? (s.message || 'switching…') : '';
+    if (s.switching) setTimeout(() => refreshEngine(true), 1000);
+    else if (watch && s.message) { toast(s.message); refreshEngine(); }
+  } catch (e) {}
 }
 async function loadMics() {
   try {

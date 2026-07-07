@@ -45,11 +45,20 @@ def ggml_model_path(name: str, config: Optional[Config] = None) -> Path:
     return models_dir(config) / f"ggml-{name}.bin"
 
 
-def download_ggml_model(name: str, config: Optional[Config] = None, quiet: bool = False) -> Path:
-    """Download a ggml model for whisper.cpp, trying each source in order."""
+def download_ggml_model(name: str, config: Optional[Config] = None, quiet: bool = False,
+                        progress=None) -> Path:
+    """Download a ggml model for whisper.cpp, trying each source in order.
+
+    `progress` (optional) receives a completion fraction in [0, 1].
+    """
     dest = ggml_model_path(name, config)
     if dest.exists() and dest.stat().st_size > 1_000_000:
         return dest
+    hook = None
+    if progress is not None:
+        def hook(blocks, block_size, total):  # noqa: ANN001
+            if total > 0:
+                progress(min(1.0, blocks * block_size / total))
     last_error: Optional[Exception] = None
     for template in GGML_SOURCES:
         url = template.format(name=name)
@@ -57,7 +66,7 @@ def download_ggml_model(name: str, config: Optional[Config] = None, quiet: bool 
             if not quiet:
                 print(f"Downloading {url} ...")
             tmp = dest.with_suffix(".part")
-            urllib.request.urlretrieve(url, tmp)  # noqa: S310 - fixed hosts
+            urllib.request.urlretrieve(url, tmp, reporthook=hook)  # noqa: S310 - fixed hosts
             if tmp.stat().st_size < 1_000_000:
                 tmp.unlink(missing_ok=True)
                 raise IOError("downloaded file suspiciously small")
@@ -68,7 +77,7 @@ def download_ggml_model(name: str, config: Optional[Config] = None, quiet: bool 
     raise RuntimeError(f"Could not download ggml model '{name}': {last_error}")
 
 
-def create_engine(config: Config) -> STTEngine:
+def create_engine(config: Config, progress=None) -> STTEngine:
     """Build the STT engine described by config.engine.
 
     backend="auto" prefers faster-whisper (accuracy) and falls back to
@@ -118,7 +127,7 @@ def create_engine(config: Config) -> STTEngine:
         if not model_path:
             path = ggml_model_path(eng.model, config)
             if not path.exists():
-                path = download_ggml_model(eng.model, config)
+                path = download_ggml_model(eng.model, config, progress=progress)
             model_path = str(path)
         return WhisperCppEngine(
             model_path=model_path,
