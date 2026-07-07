@@ -1,9 +1,15 @@
 """Audio feedback - soft tones on record start/stop/error.
 
-On macOS the tones go through NSSound (the system audio server) instead of
-PortAudio: sd.play() opens and closes an output stream around every beep,
-which pops, and the stop tone plays exactly while Whisper saturates the
-CPU/GPU - PortAudio underruns audibly crackle, coreaudiod doesn't care.
+Two design rules learned the hard way:
+
+* Playback goes through NSSound on macOS (the system audio server), never
+  PortAudio: sd.play() opens/closes an output stream around every beep
+  (audible pop) and underruns when Whisper saturates the machine right
+  after the hotkey is released.
+* The tones are synthesized plucks (fundamental + decaying overtones, like
+  a soft marimba), not raw sine sweeps - much closer to Wispr Flow's
+  feedback sound. Drop your own start.wav / stop.wav / error.wav (or
+  .aiff/.mp3 on macOS) into <data dir>/sounds/ to replace them entirely.
 """
 
 from __future__ import annotations
@@ -11,30 +17,50 @@ from __future__ import annotations
 import io
 import sys
 import wave
+from pathlib import Path
+from typing import Optional
 
 import numpy as np
-
-from .audio import SAMPLE_RATE
 
 _PLAYBACK_RATE = 48000  # native output rate; no device resampling clicks
 
 
-def tone(freq: float, duration: float = 0.09, volume: float = 0.18,
-         rate: int = _PLAYBACK_RATE) -> np.ndarray:
-    t = np.linspace(0, duration, int(rate * duration), endpoint=False)
-    wave_ = np.sin(2 * np.pi * freq * t)
-    # raised-cosine fade in/out to avoid clicks
-    fade = min(len(t) // 4, int(rate * 0.015)) or 1
-    envelope = np.ones_like(wave_)
-    ramp = (1 - np.cos(np.linspace(0, np.pi, fade))) / 2
-    envelope[:fade] = ramp
-    envelope[-fade:] = ramp[::-1]
-    return (wave_ * envelope * volume).astype(np.float32)
+def _pluck(freq: float, duration: float = 0.18, volume: float = 0.22,
+           delay: float = 0.0, decay: float = 22.0,
+           rate: int = _PLAYBACK_RATE) -> np.ndarray:
+    """A soft struck-note: fundamental plus fast-decaying overtones."""
+    n = int(rate * duration)
+    t = np.linspace(0, duration, n, endpoint=False)
+    tone = (
+        np.sin(2 * np.pi * freq * t)
+        + 0.35 * np.sin(2 * np.pi * 2 * freq * t) * np.exp(-t * decay * 1.8)
+        + 0.12 * np.sin(2 * np.pi * 3 * freq * t) * np.exp(-t * decay * 2.6)
+    )
+    envelope = np.exp(-t * decay)
+    attack = max(1, int(rate * 0.004))  # declick the onset
+    envelope[:attack] *= np.linspace(0, 1, attack)
+    out = (tone * envelope * volume).astype(np.float32)
+    if delay > 0:
+        out = np.concatenate([np.zeros(int(rate * delay), dtype=np.float32), out])
+    return out
 
 
-START_SOUND = np.concatenate([tone(660), tone(880)])
-STOP_SOUND = np.concatenate([tone(880), tone(660)])
-ERROR_SOUND = np.concatenate([tone(220, 0.12), tone(196, 0.16)])
+def _mix(*parts: np.ndarray) -> np.ndarray:
+    length = max(p.shape[0] for p in parts)
+    out = np.zeros(length, dtype=np.float32)
+    for p in parts:
+        out[: p.shape[0]] += p
+    return np.clip(out, -1.0, 1.0)
+
+
+# C5->G5 "ready" rise; G5->C5 "done" fall; low dissonant pair for errors.
+START_SOUND = _mix(_pluck(523.25), _pluck(783.99, delay=0.07))
+STOP_SOUND = _mix(_pluck(783.99), _pluck(523.25, delay=0.07))
+ERROR_SOUND = _mix(_pluck(220.0, duration=0.28, decay=14.0),
+                   _pluck(207.65, duration=0.28, decay=14.0, delay=0.09))
+
+_CUSTOM_STEMS = {"start": None, "stop": None, "error": None}
+_CUSTOM_EXTS = (".wav", ".aiff", ".aif", ".mp3", ".m4a", ".caf")
 
 
 def _wav_bytes(samples: np.ndarray, rate: int = _PLAYBACK_RATE) -> bytes:
@@ -51,35 +77,53 @@ def _wav_bytes(samples: np.ndarray, rate: int = _PLAYBACK_RATE) -> bytes:
 class SoundPlayer:
     """Plays feedback tones; silently does nothing when audio out is missing."""
 
-    def __init__(self, enabled: bool = True) -> None:
+    def __init__(self, enabled: bool = True,
+                 sounds_dir: Optional[Path] = None) -> None:
         self.enabled = enabled
-        self._nssounds: dict = {}  # id(samples) -> NSSound, pre-rendered
+        self.sounds_dir = Path(sounds_dir) if sounds_dir else None
+        self._nssounds: dict = {}  # cache: name -> NSSound
 
-    def _play_nssound(self, samples: np.ndarray) -> bool:
-        try:
-            from AppKit import NSSound
-            from Foundation import NSData
+    def _custom_file(self, name: str) -> Optional[Path]:
+        if self.sounds_dir is None:
+            return None
+        for ext in _CUSTOM_EXTS:
+            p = self.sounds_dir / f"{name}{ext}"
+            if p.exists():
+                return p
+        return None
 
-            sound = self._nssounds.get(id(samples))
-            if sound is None:
-                data = NSData.dataWithBytes_length_(
-                    _wav_bytes(samples), len(_wav_bytes(samples)))
-                sound = NSSound.alloc().initWithData_(data)
-                if sound is None:
-                    return False
-                self._nssounds[id(samples)] = sound
-            if sound.isPlaying():
-                sound.stop()
-            sound.play()
-            return True
-        except Exception:
-            return False
+    def _nssound_for(self, name: str, samples: np.ndarray):
+        from AppKit import NSSound
+        from Foundation import NSData
 
-    def play(self, samples: np.ndarray) -> None:
+        sound = self._nssounds.get(name)
+        if sound is not None:
+            return sound
+        custom = self._custom_file(name)
+        if custom is not None:
+            sound = NSSound.alloc().initWithContentsOfFile_byReference_(
+                str(custom), True)
+        if sound is None:
+            data = _wav_bytes(samples)
+            sound = NSSound.alloc().initWithData_(
+                NSData.dataWithBytes_length_(data, len(data)))
+        if sound is not None:
+            self._nssounds[name] = sound
+        return sound
+
+    def play(self, samples: np.ndarray, name: str = "custom") -> None:
         if not self.enabled:
             return
-        if sys.platform == "darwin" and self._play_nssound(samples):
-            return
+        if sys.platform == "darwin":
+            try:
+                sound = self._nssound_for(name, samples)
+                if sound is not None:
+                    if sound.isPlaying():
+                        sound.stop()
+                    sound.play()
+                    return
+            except Exception:
+                pass
         try:
             import sounddevice as sd
 
@@ -88,10 +132,10 @@ class SoundPlayer:
             pass
 
     def start(self) -> None:
-        self.play(START_SOUND)
+        self.play(START_SOUND, "start")
 
     def stop(self) -> None:
-        self.play(STOP_SOUND)
+        self.play(STOP_SOUND, "stop")
 
     def error(self) -> None:
-        self.play(ERROR_SOUND)
+        self.play(ERROR_SOUND, "error")

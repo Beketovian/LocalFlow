@@ -73,7 +73,10 @@ class FlowController:
         self.recorder = recorder or ArrayRecorder()
         self.injector = injector or CallbackInjector()
         self.window_provider = window_provider or ActiveWindowProvider()
-        self.sounds = sounds or SoundPlayer(enabled=self.config.audio.feedback_sounds)
+        self.sounds = sounds or SoundPlayer(
+            enabled=self.config.audio.feedback_sounds,
+            sounds_dir=self.config.resolved_data_dir() / "sounds",
+        )
         self.llm = llm or LLMClient(self.config.llm,
                                     data_dir=self.config.resolved_data_dir())
         self.commands = command_processor or CommandProcessor(llm_edit=self._llm_edit)
@@ -328,5 +331,6 @@ class FlowController:
 
     def close(self) -> None:
         self.history.close()
+        self.recorder.close()
         if self._engine is not None:
             self._engine.close()

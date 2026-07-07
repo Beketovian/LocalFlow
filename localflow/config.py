@@ -76,7 +76,11 @@ class AudioConfig:
     silence_stop_after: float = 1.6
     # Energy threshold used by the simple VAD (fraction of full scale RMS)
     vad_threshold: float = 0.012
-    max_recording_seconds: float = 120.0
+    max_recording_seconds: float = 600.0
+    # Keep the mic stream open this long after a dictation: reopening the
+    # device clicks audibly and clips the first syllable. 0 = release
+    # immediately (mic indicator disappears right away).
+    keep_mic_open_seconds: float = 45.0
 
 
 @dataclass

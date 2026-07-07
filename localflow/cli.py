@@ -193,6 +193,7 @@ def cmd_run(args) -> int:
             device=config.audio.input_device or None,  # "" = system default
             max_seconds=config.audio.max_recording_seconds,
             on_chunk=on_chunk,
+            keep_open_seconds=config.audio.keep_mic_open_seconds,
         )
 
     controller = FlowController(
@@ -209,7 +210,9 @@ def cmd_run(args) -> int:
         """Dashboard hook: mic/sound changes apply without a restart."""
         controller.sounds.enabled = config.audio.feedback_sounds
         if controller.state.status == "idle":
+            old = controller.recorder
             controller.recorder = make_recorder()
+            old.close()  # release the previous device's warm stream
             print(f"  microphone: {config.audio.input_device or 'system default'}")
 
     if overlay_ok:
