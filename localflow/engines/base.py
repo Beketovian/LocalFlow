@@ -8,6 +8,7 @@ swap faster-whisper <-> whisper.cpp freely.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -21,6 +22,21 @@ class Segment:
     text: str
 
 
+# Whisper labels non-speech instead of staying quiet: "[BLANK_AUDIO]",
+# "[MUSIC]", "*coughs*", "(keyboard clacking)", ♪ lyrics ♪. Nothing a user
+# dictates comes back in square brackets/asterisks/music notes, so those are
+# stripped wholesale; parentheses can be legitimate, so only known noise
+# words are removed there.
+_BRACKET_NOISE = re.compile(r"\[[^\]]*\]|\*[^*\n]*\*|♪[^♪\n]*♪|♪")
+_PAREN_NOISE = re.compile(
+    r"\(\s*[a-z\s]*\b(?:silence|silent|music|applause|laugh\w*|cough\w*|"
+    r"typing|click\w*|clack\w*|breath\w*|sigh\w*|noise|static|inaudible|"
+    r"blank|beep\w*|wind|birds?|chirp\w*|speaking|foreign language|"
+    r"no (?:audio|speech))\b[a-z\s]*\)",
+    re.IGNORECASE,
+)
+
+
 @dataclass
 class TranscriptionResult:
     text: str
@@ -30,7 +46,9 @@ class TranscriptionResult:
 
     @property
     def clean_text(self) -> str:
-        return self.text.strip()
+        text = _BRACKET_NOISE.sub(" ", self.text)
+        text = _PAREN_NOISE.sub(" ", text)
+        return re.sub(r"\s{2,}", " ", text).strip()
 
 
 class STTEngine:

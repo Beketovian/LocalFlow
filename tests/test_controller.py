@@ -208,3 +208,16 @@ class TestStatusRecovery:
             pass
         assert controller.state.status == "idle"
         assert statuses[-1] == "idle"
+
+
+class TestBlankAudio:
+    def test_blank_audio_injects_nothing(self):
+        # Whisper's [BLANK_AUDIO] for silent recordings must never be pasted
+        # or saved to history.
+        controller, _, injector = make_controller(["[BLANK_AUDIO]"])
+        controller.start_recording()
+        event = controller.stop_recording()
+        assert event.formatted_text == ""
+        assert event.injected is False
+        assert injector.received == []
+        assert controller.history.recent(10) == []

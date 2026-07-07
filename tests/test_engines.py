@@ -50,3 +50,24 @@ class TestRegistry:
         config.engine.model_path = str(model_path)
         engine = create_engine(config)
         assert engine.name == "whisper.cpp"
+
+
+class TestNoiseAnnotations:
+    def test_blank_audio_yields_empty(self):
+        from localflow.engines.base import TranscriptionResult
+
+        for noise in ("[BLANK_AUDIO]", "[ Silence ]", "(keyboard clacking)",
+                      "*coughs*", "♪", "[BLANK_AUDIO] [BLANK_AUDIO]"):
+            assert TranscriptionResult(noise).clean_text == "", noise
+
+    def test_noise_stripped_from_real_speech(self):
+        from localflow.engines.base import TranscriptionResult
+
+        r = TranscriptionResult("Hello [BLANK_AUDIO] world (sighs)")
+        assert r.clean_text == "Hello world"
+
+    def test_legit_parentheses_kept(self):
+        from localflow.engines.base import TranscriptionResult
+
+        r = TranscriptionResult("I bought (organic) apples")
+        assert r.clean_text == "I bought (organic) apples"
