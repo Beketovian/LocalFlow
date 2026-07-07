@@ -143,7 +143,15 @@ class FlowController:
             self._set_status("recording")
             self.state.mode = mode
         self._record_started_at = time.time()
-        self.recorder.start()
+        try:
+            self.recorder.start()
+        except Exception:
+            # Mic unavailable (device vanished, permissions): back to idle so
+            # the next attempt isn't silently ignored, and audibly fail.
+            with self._lock:
+                self._set_status("idle")
+            self.sounds.error()
+            raise
         self.sounds.start()
         return True
 

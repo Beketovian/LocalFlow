@@ -160,6 +160,7 @@ class MicrophoneRecorder(Recorder):
         self._chunks: List[np.ndarray] = []
         self._lock = threading.Lock()
         self._stream = None
+        self._stream_rate = sample_rate  # actual device rate (may differ)
         self._capturing = False
         self._cap_hit = False
         self._close_timer: Optional[threading.Timer] = None
@@ -170,7 +171,7 @@ class MicrophoneRecorder(Recorder):
         mono = indata[:, 0].copy() if indata.ndim > 1 else indata.copy()
         with self._lock:
             total = sum(c.shape[0] for c in self._chunks)
-            if total > self.max_seconds * self.sample_rate:
+            if total > self.max_seconds * self._stream_rate:
                 # Cap reached: stop collecting but keep the stream alive
                 # (raising CallbackStop here would kill the warm stream).
                 if not self._cap_hit:
@@ -182,18 +183,46 @@ class MicrophoneRecorder(Recorder):
             self.on_chunk(mono)
 
     def _ensure_stream(self) -> None:
+        """Open (or reuse) the input stream, surviving device changes.
+
+        Two real-world failure modes handled here:
+        * PortAudio caches the device topology at init - after AirPods
+          connect/disconnect, opening the "default" device fails until
+          PortAudio is re-initialized.
+        * Bluetooth mics often reject Whisper's 16 kHz; opening at the
+          device's native rate always works and we resample afterwards.
+        """
         import sounddevice as sd  # lazy: needs PortAudio
 
         if self._stream is not None:
-            return
-        self._stream = sd.InputStream(
-            samplerate=self.sample_rate,
-            channels=1,
-            dtype="float32",
-            device=self.device,
-            callback=self._callback,
-        )
-        self._stream.start()
+            if getattr(self._stream, "active", True):
+                return
+            self.close()  # device died under the warm stream; reopen
+
+        last_error: Optional[Exception] = None
+        for refresh in (False, True):
+            if refresh:
+                try:  # re-scan devices; safe with no streams open
+                    sd._terminate()
+                    sd._initialize()
+                except Exception:
+                    pass
+            for rate in (self.sample_rate, None):  # preferred, then native
+                try:
+                    stream = sd.InputStream(
+                        samplerate=rate,
+                        channels=1,
+                        dtype="float32",
+                        device=self.device,
+                        callback=self._callback,
+                    )
+                    stream.start()
+                    self._stream = stream
+                    self._stream_rate = int(stream.samplerate)
+                    return
+                except Exception as exc:
+                    last_error = exc
+        raise last_error
 
     def start(self) -> None:
         if self._close_timer is not None:
@@ -207,16 +236,23 @@ class MicrophoneRecorder(Recorder):
 
     def stop(self) -> np.ndarray:
         self._capturing = False
+        with self._lock:
+            chunks = list(self._chunks)
+        if not chunks:
+            # Recorded nothing: the device likely vanished under the warm
+            # stream. Drop it so the next dictation opens a fresh one.
+            self.close()
+            return np.zeros(0, dtype=np.float32)
         if self.keep_open_seconds > 0:
             self._close_timer = threading.Timer(self.keep_open_seconds, self.close)
             self._close_timer.daemon = True
             self._close_timer.start()
         else:
             self.close()
-        with self._lock:
-            if not self._chunks:
-                return np.zeros(0, dtype=np.float32)
-            return np.concatenate(self._chunks).astype(np.float32)
+        audio = np.concatenate(chunks).astype(np.float32)
+        if self._stream_rate != self.sample_rate:
+            audio = resample(audio, self._stream_rate, self.sample_rate)
+        return audio
 
     def close(self) -> None:
         """Release the device (idle timeout, device switch, shutdown)."""
@@ -240,4 +276,7 @@ class MicrophoneRecorder(Recorder):
         with self._lock:
             if not self._chunks:
                 return np.zeros(0, dtype=np.float32)
-            return np.concatenate(self._chunks).astype(np.float32)
+            audio = np.concatenate(self._chunks).astype(np.float32)
+        if self._stream_rate != self.sample_rate:
+            audio = resample(audio, self._stream_rate, self.sample_rate)
+        return audio
