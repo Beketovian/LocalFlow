@@ -92,6 +92,9 @@ class FlowController:
             self.history = History(":memory:")
 
         self.state = ControllerState()
+        # Serializes lazy engine creation: the startup warm-up thread and a
+        # too-eager first dictation must not both load a model.
+        self._engine_lock = threading.Lock()
         # Serializes engine access between the final pass and the live
         # preview thread (whisper models aren't concurrency-safe).
         self.transcribe_lock = threading.Lock()
@@ -106,11 +109,18 @@ class FlowController:
 
     @property
     def engine(self) -> STTEngine:
-        if self._engine is None:
-            from .engines.registry import create_engine
+        return self.ensure_engine()
 
-            self._engine = create_engine(self.config)
-        return self._engine
+    def ensure_engine(self, progress=None) -> STTEngine:
+        """Get the STT engine, creating (and possibly downloading) it on
+        first use. Blocking; safe to call from any thread - a dictation that
+        races the startup warm-up simply waits for the same engine."""
+        with self._engine_lock:
+            if self._engine is None:
+                from .engines.registry import create_engine
+
+                self._engine = create_engine(self.config, progress=progress)
+            return self._engine
 
     def on_dictation(self, listener: Callable[[DictationEvent], None]) -> None:
         self.listeners.append(listener)

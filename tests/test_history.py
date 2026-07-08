@@ -61,3 +61,35 @@ class TestHistory:
 
     def test_empty_stats(self):
         assert History(":memory:").stats().total_words == 0
+
+    def test_migrates_pre_words_database(self, tmp_path):
+        # Databases created before the stored word-count column must get it
+        # backfilled on open, and stats must match the old Python counting.
+        import sqlite3
+
+        path = tmp_path / "old.db"
+        db = sqlite3.connect(path)
+        db.execute(
+            """CREATE TABLE history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp REAL NOT NULL,
+                raw_text TEXT NOT NULL,
+                formatted_text TEXT NOT NULL,
+                app TEXT DEFAULT '',
+                language TEXT DEFAULT '',
+                duration REAL DEFAULT 0,
+                mode TEXT DEFAULT 'dictation'
+            )"""
+        )
+        db.execute(
+            "INSERT INTO history (timestamp, raw_text, formatted_text, duration)"
+            " VALUES (?, '', 'three  words\nhere', 60.0)",
+            (time.time(),),
+        )
+        db.commit()
+        db.close()
+        h = History(path)
+        s = h.stats()
+        assert s.total_words == 3  # split() semantics, not space counting
+        assert s.average_wpm == 3.0
+        h.close()

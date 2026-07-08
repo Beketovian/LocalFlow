@@ -74,13 +74,47 @@ class TestBackendRouting:
         assert client.models == ["test-model-4bit"]
         assert "MLX" in client.base_url
 
-    def test_auto_prefers_server(self, tmp_path, monkeypatch):
-        # reuse the fake HTTP server from test_llm
+    def test_auto_prefers_embedded_over_running_server(self, tmp_path, monkeypatch):
+        # A running LM Studio (base_url "auto" probes it) must NOT win over
+        # local weights: dictation would hijack whatever model the user has
+        # loaded there for other work.
+        from tests.test_llm import FakeLLMServer
+
+        monkeypatch.setattr(llm_mod.importlib.util, "find_spec",
+                            lambda name: object())
+        server = FakeLLMServer()
+        try:
+            make_mlx_dir(tmp_path / "models" / "llm", "local-model")
+            monkeypatch.setattr(llm_mod, "_PROBE_URLS", (server.base_url,))
+            client = LLMClient(LLMConfig(backend="auto"), data_dir=tmp_path)
+            assert client.mode == "embedded"
+            assert client.model == "local-model"
+        finally:
+            server.stop()
+
+    def test_auto_with_explicit_base_url_prefers_that_server(self, tmp_path, monkeypatch):
+        # Setting a base_url is a deliberate "use my server" - it wins even
+        # when local weights exist.
+        from tests.test_llm import FakeLLMServer
+
+        monkeypatch.setattr(llm_mod.importlib.util, "find_spec",
+                            lambda name: object())
+        server = FakeLLMServer()
+        try:
+            make_mlx_dir(tmp_path / "models" / "llm", "local-model")
+            client = LLMClient(
+                LLMConfig(backend="auto", base_url=server.base_url),
+                data_dir=tmp_path,
+            )
+            assert client.mode == "server"
+        finally:
+            server.stop()
+
+    def test_auto_falls_back_to_server_without_weights(self, tmp_path):
         from tests.test_llm import FakeLLMServer
 
         server = FakeLLMServer()
         try:
-            make_mlx_dir(tmp_path / "models" / "llm", "local-model")
             client = LLMClient(
                 LLMConfig(backend="auto", base_url=server.base_url),
                 data_dir=tmp_path,

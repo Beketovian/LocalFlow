@@ -8,8 +8,10 @@ Two interchangeable backends behind one client:
              no external app needed. This is what the packaged LocalFlow.app
              uses.
 
-With backend "auto", a running server wins (it may host a bigger model the
-user chose), otherwise local weights are loaded in-process.
+With backend "auto", local weights loaded in-process win: LocalFlow must
+never depend on (or interfere with) whatever model the user happens to have
+loaded in LM Studio for other work. A server is only preferred when the user
+points at one explicitly (base_url set), or when no local weights exist.
 
 Used for two things:
 
@@ -43,6 +45,18 @@ _PROBE_URLS = (
 
 # Models that can't chat; skipped when picking a model automatically.
 _NON_CHAT = re.compile(r"embed|whisper|rerank|clip|vae|tts", re.IGNORECASE)
+
+
+def _preferred_chat_model(chat_models: List[str]) -> Optional[str]:
+    """Pick a dictation model from a server's catalog: the bake-off winner
+    when present (compared ignoring separators), otherwise the first entry."""
+    from .llm_local import DEFAULT_MODEL_NAME
+
+    wanted = DEFAULT_MODEL_NAME.replace("-", "")
+    for name in chat_models:
+        if wanted in name.lower().replace("-", "").replace("_", ""):
+            return name
+    return chat_models[0] if chat_models else None
 
 _REWRITE_SYSTEM = """\
 You clean up voice-dictated text. The user spoke the text below; the speech \
@@ -139,12 +153,22 @@ class LLMClient:
             self._engine = None
 
             backend = self.config.backend
-            if backend in ("auto", "server") and self._probe_server():
-                self._mode = "server"
-                return True
-            if backend in ("auto", "embedded") and self._probe_embedded():
-                self._mode = "embedded"
-                return True
+            # An explicit base_url is a deliberate "use my server" - honor it
+            # first even in auto mode. Plain auto prefers the in-process
+            # engine so a running LM Studio is never hijacked for dictation.
+            if backend == "auto" and self.config.base_url == "auto":
+                order = ("embedded", "server")
+            elif backend == "auto":
+                order = ("server", "embedded")
+            else:
+                order = (backend,)
+            for mode in order:
+                if mode == "server" and self._probe_server():
+                    self._mode = "server"
+                    return True
+                if mode == "embedded" and self._probe_embedded():
+                    self._mode = "embedded"
+                    return True
             return False
 
     def _probe_server(self) -> bool:
@@ -167,7 +191,11 @@ class LLMClient:
             self._model = self.config.model
         else:
             chat_models = [m for m in self._models if not _NON_CHAT.search(m)]
-            self._model = chat_models[0] if chat_models else None
+            # Prefer the model the dictation bake-off picked when the server
+            # has it (LM Studio lists all downloaded models and JIT-loads the
+            # one a request names). "First model in the list" is whatever the
+            # user loaded for other work - the wrong default for dictation.
+            self._model = _preferred_chat_model(chat_models)
         return self._model is not None
 
     def _probe_embedded(self) -> bool:

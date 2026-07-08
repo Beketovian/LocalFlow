@@ -60,6 +60,7 @@ def _isolate_user_files(monkeypatch, tmp_path):
     """
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.delenv("LOCALFLOW_RESOURCES", raising=False)
 
 
 @pytest.fixture(autouse=True)

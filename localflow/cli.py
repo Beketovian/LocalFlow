@@ -244,10 +244,10 @@ def cmd_run(args) -> int:
                             message=f"preparing {config.engine.model}...")
 
         def worker() -> None:
-            from .engines.registry import create_engine, ggml_model_path
+            from .engines.registry import create_engine, resolve_model_file
 
             try:
-                if not ggml_model_path(config.engine.model, config).exists():
+                if resolve_model_file(config.engine.model, config) is None:
                     engine_state["message"] = \
                         f"downloading {config.engine.model}..."
 
@@ -292,7 +292,11 @@ def cmd_run(args) -> int:
         def on_status(status: str) -> None:
             if status == "recording":
                 overlay.show("recording")
-                if config.live_preview and overlay.native:
+                # No live preview while the engine is still loading at
+                # startup: touching controller.engine here would block the
+                # status callback (and recording itself) on the model load.
+                if config.live_preview and overlay.native \
+                        and controller._engine is not None:
                     from .streaming import StreamingPreview
 
                     lang = config.engine.language
@@ -371,11 +375,6 @@ def cmd_run(args) -> int:
         except OSError as exc:
             dashboard = None
             print(f"  dashboard: unavailable ({exc}); dictation still works")
-
-    # warm the model up front so the first dictation is snappy
-    print("  loading model...", end=" ", flush=True)
-    controller.engine
-    print("ready.")
 
     hands_free = {"on": False}
 
@@ -542,13 +541,46 @@ def cmd_run(args) -> int:
         except Exception:
             pass  # headless or pystray missing - fine
 
+    # Load (and on first run, download ~150 MB) the Whisper model in the
+    # background: the menu bar icon and pill must appear immediately, not
+    # after a silent multi-minute download. A dictation that beats the load
+    # just blocks on ensure_engine until the same engine is ready; the
+    # dashboard shows the progress via engine_state.
+    def initial_engine_load() -> None:
+        from .engines.registry import resolve_model_file
+
+        engine_state["switching"] = True
+        try:
+            if resolve_model_file(config.engine.model, config) is None:
+                engine_state["message"] = f"downloading {config.engine.model}..."
+                print(f"  model {config.engine.model}: not on disk, downloading...")
+
+            def prog(frac: float) -> None:
+                engine_state["progress"] = frac
+                engine_state["message"] = \
+                    f"downloading {config.engine.model}... {frac:.0%}"
+
+            controller.ensure_engine(progress=prog)
+            engine_state["message"] = f"{config.engine.model} active"
+            print(f"  model ready: {config.engine.model}")
+        except Exception as exc:
+            engine_state["message"] = f"model load failed: {exc}"
+            print(f"  ! model load failed: {exc!r}")
+        finally:
+            engine_state["switching"] = False
+            engine_state["progress"] = None
+
+    threading.Thread(target=initial_engine_load, daemon=True).start()
+
     if config.llm.enabled:
         # LM Studio JIT-unloads idle models; the next dictation would then
         # pay the full reload. A tiny request every 10 minutes keeps the
-        # model resident for the whole session.
+        # model resident for the whole session. The embedded engine lives in
+        # this process and never unloads, so pinging it would just burn CPU.
         def llm_keepalive() -> None:
             while not stop_event.wait(600):
-                controller.llm.warm_up()
+                if controller.llm.mode == "server":
+                    controller.llm.warm_up()
 
         threading.Thread(target=llm_keepalive, daemon=True).start()
 
@@ -809,7 +841,7 @@ def cmd_autostart(args) -> int:
 def cmd_doctor(args) -> int:
     import importlib.util
 
-    from .engines.registry import available_backends, ggml_model_path
+    from .engines.registry import available_backends, ggml_model_path, resolve_model_file
 
     config = _load_config(args)
     print(f"LocalFlow {__version__}")
@@ -817,9 +849,12 @@ def cmd_doctor(args) -> int:
           f"({'exists' if _config_path(args).exists() else 'defaults'})")
     backends = available_backends()
     print(f"STT backends: {', '.join(backends) or 'NONE - install one!'}")
-    model_file = ggml_model_path(config.engine.model, config)
-    print(f"ggml model '{config.engine.model}': "
-          f"{'present' if model_file.exists() else 'not downloaded'} ({model_file})")
+    model_file = resolve_model_file(config.engine.model, config)
+    if model_file is None:
+        print(f"ggml model '{config.engine.model}': not downloaded "
+              f"({ggml_model_path(config.engine.model, config)})")
+    else:
+        print(f"ggml model '{config.engine.model}': present ({model_file})")
     for mod, why in (
         ("sounddevice", "microphone capture"),
         ("pynput", "global hotkeys + typing"),

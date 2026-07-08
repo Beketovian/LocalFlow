@@ -298,11 +298,13 @@ button.rawbtn { font-size: 11px; padding: 1px 4px; }
 
     <h2>AI formatting <span style="font-weight:400;font-size:12px;opacity:.6" id="llmStatus"></span></h2>
     <div class="set-card">
-      <div class="set-row"><div class="l"><b>Local LLM cleanup</b><small>Grammar, fillers and self-corrections via a local model (LM Studio / Ollama)</small></div>
+      <div class="set-row"><div class="l"><b>Local LLM cleanup</b><small>Grammar, fillers and self-corrections via a local model, entirely on this Mac</small></div>
         <label class="switch"><input type="checkbox" id="llmEnabled"><span class="slider"></span></label></div>
-      <div class="set-row"><div class="l"><b>Model</b><small>"auto" picks the first chat model on the server</small></div>
+      <div class="set-row" id="llmDlRow" hidden><div class="l"><b>Built-in model</b><small id="llmDlMsg">Qwen3-4B (~2.3 GB, one-time download) — runs inside LocalFlow, no other apps needed</small></div>
+        <button id="llmDlBtn" onclick="downloadLLM()">Download</button></div>
+      <div class="set-row"><div class="l"><b>Model</b><small>"auto" prefers the built-in dictation model</small></div>
         <select id="llmModel" style="max-width:280px"><option value="auto">Auto</option></select></div>
-      <div class="set-row"><div class="l"><b>Server</b><small>"auto" probes LM Studio then Ollama; or a base URL like http://127.0.0.1:1234/v1</small></div>
+      <div class="set-row"><div class="l"><b>Server</b><small>Optional: a base URL like http://127.0.0.1:1234/v1 makes that server (LM Studio / Ollama) take over</small></div>
         <input type="text" id="llmUrl" style="width:280px"></div>
       <div class="set-row"><div class="l"><b>Command mode edits</b><small>Free-form spoken instructions use the LLM</small></div>
         <label class="switch"><input type="checkbox" id="llmCmd"><span class="slider"></span></label></div>
@@ -564,17 +566,34 @@ async function loadMics() {
     $('micDevice').onchange = () => save({ audio: { input_device: $('micDevice').value } });
   } catch (e) {}
 }
-async function loadLLMStatus() {
+async function loadLLMStatus(refresh = true) {
   try {
-    const s = await jf('/api/llm?refresh=1');
+    const s = await jf('/api/llm' + (refresh ? '?refresh=1' : ''));
     $('llmStatus').innerText = s.available
-      ? `— connected: ${s.model} @ ${s.base_url}`
-      : '— no local model server found (start LM Studio or Ollama)';
+      ? (s.mode === 'embedded' ? `— built-in: ${s.model}` : `— server: ${s.model} @ ${s.base_url}`)
+      : '— no model yet: download the built-in one below, or start LM Studio / Ollama';
+    const dl = s.download || {};
+    if (dl.downloading) {
+      $('llmDlRow').hidden = false;
+      $('llmDlBtn').disabled = true;
+      $('llmDlMsg').innerText = dl.message || 'downloading...';
+      setTimeout(() => loadLLMStatus(false), 1500);
+    } else {
+      $('llmDlRow').hidden = s.available && s.mode === 'embedded';
+      $('llmDlBtn').disabled = false;
+      if (dl.message) $('llmDlMsg').innerText = dl.message;
+    }
     const current = CONFIG.llm?.model || 'auto';
     $('llmModel').innerHTML = '<option value="auto">Auto</option>' +
       (s.models || []).map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
     $('llmModel').value = (s.models || []).includes(current) || current === 'auto' ? current : 'auto';
   } catch (e) { $('llmStatus').innerText = ''; }
+}
+async function downloadLLM() {
+  $('llmDlBtn').disabled = true;
+  $('llmDlMsg').innerText = 'starting...';
+  await jf('/api/llm/download', { method: 'POST', body: '{}' });
+  setTimeout(() => loadLLMStatus(false), 800);
 }
 async function save(patch) {
   CONFIG = await jf('/api/settings', { method: 'POST', body: JSON.stringify(patch) });

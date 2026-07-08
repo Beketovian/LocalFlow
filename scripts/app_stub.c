@@ -28,26 +28,31 @@
 
 typedef int (*py_bytes_main_t)(int, char **);
 
-/* Standalone bundles bake "@RESOURCES@/..." into LOCALFLOW_PYTHONPATH;
- * expand it to <bundle>/Contents/Resources at runtime so the app keeps
- * working wherever it is moved. */
-static void resolve_pythonpath(char *out, size_t out_size) {
-    const char *template = LOCALFLOW_PYTHONPATH;
-    if (strstr(template, "@RESOURCES@") == NULL) {
-        snprintf(out, out_size, "%s", template);
-        return;
-    }
+/* Standalone bundles bake "@RESOURCES@/..." into the -D defines below
+ * (PYTHONPATH, libpython, PYTHONHOME); expand it to
+ * <bundle>/Contents/Resources at runtime so the app keeps working wherever
+ * it is moved. */
+static void resources_dir(char *out, size_t out_size) {
+    out[0] = '\0';
     char exe[PATH_MAX];
     uint32_t size = sizeof exe;
-    char resources[PATH_MAX] = "";
     if (_NSGetExecutablePath(exe, &size) == 0) {
         char real[PATH_MAX];
         if (realpath(exe, real) != NULL) {
             /* .../LocalFlow.app/Contents/MacOS/LocalFlow -> .../Contents */
             char *contents = dirname(dirname(real));
-            snprintf(resources, sizeof resources, "%s/Resources", contents);
+            snprintf(out, out_size, "%s/Resources", contents);
         }
     }
+}
+
+static void expand_template(const char *template, char *out, size_t out_size) {
+    if (strstr(template, "@RESOURCES@") == NULL) {
+        snprintf(out, out_size, "%s", template);
+        return;
+    }
+    char resources[PATH_MAX];
+    resources_dir(resources, sizeof resources);
     size_t pos = 0;
     for (const char *p = template; *p != '\0' && pos + 1 < out_size;) {
         if (strncmp(p, "@RESOURCES@", 11) == 0) {
@@ -65,10 +70,26 @@ int main(int argc, char *argv[]) {
 
     /* Environment the daemon expects (mirrors the old shell launcher). */
     char pythonpath[4 * PATH_MAX];
-    resolve_pythonpath(pythonpath, sizeof pythonpath);
+    expand_template(LOCALFLOW_PYTHONPATH, pythonpath, sizeof pythonpath);
     setenv("LOCALFLOW_APP", "1", 1);
     setenv("PYTHONUNBUFFERED", "1", 1);
     setenv("PYTHONPATH", pythonpath, 1);
+
+    /* Where read-only bundled assets live (e.g. Resources/models with the
+     * Whisper weights standalone builds ship). */
+    char resources[PATH_MAX];
+    resources_dir(resources, sizeof resources);
+    if (resources[0] != '\0')
+        setenv("LOCALFLOW_RESOURCES", resources, 1);
+
+#ifdef LOCALFLOW_PYTHONHOME
+    /* Standalone bundles carry their own Python runtime: without
+     * PYTHONHOME, libpython would look for the stdlib next to this
+     * executable (argv[0]) and fail to start. */
+    char pythonhome[PATH_MAX];
+    expand_template(LOCALFLOW_PYTHONHOME, pythonhome, sizeof pythonhome);
+    setenv("PYTHONHOME", pythonhome, 1);
+#endif
 
     /* Send stdout/stderr to the log file - there is no terminal. */
     const char *home = getenv("HOME");
@@ -86,9 +107,11 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    void *libpython = dlopen(LIBPYTHON_PATH, RTLD_NOW | RTLD_GLOBAL);
+    char libpython_path[PATH_MAX];
+    expand_template(LIBPYTHON_PATH, libpython_path, sizeof libpython_path);
+    void *libpython = dlopen(libpython_path, RTLD_NOW | RTLD_GLOBAL);
     if (libpython == NULL) {
-        fprintf(stderr, "LocalFlow: cannot load %s: %s\n", LIBPYTHON_PATH, dlerror());
+        fprintf(stderr, "LocalFlow: cannot load %s: %s\n", libpython_path, dlerror());
         return 1;
     }
     py_bytes_main_t py_bytes_main =

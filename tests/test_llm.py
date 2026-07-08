@@ -92,6 +92,21 @@ class TestProbe:
         assert client.available is True
         assert client.model == "openai/gpt-oss-20b"
 
+    def test_auto_prefers_dictation_model_from_catalog(self):
+        # LM Studio lists every downloaded model and JIT-loads whichever a
+        # request names; pick the dictation bake-off winner, not whatever
+        # model the user happens to have loaded first.
+        server = FakeLLMServer(models=[
+            "openai/gpt-oss-120b",           # the user's workhorse
+            "qwen/qwen3-4b-instruct-2507",   # the dictation model
+            "text-embedding-nomic",
+        ])
+        try:
+            client = client_for(server)
+            assert client.model == "qwen/qwen3-4b-instruct-2507"
+        finally:
+            server.stop()
+
 
 class TestRewrite:
     def test_basic(self, fake_server):

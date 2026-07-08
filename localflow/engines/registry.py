@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import urllib.request
 from pathlib import Path
 from typing import List, Optional
@@ -54,6 +55,34 @@ def validate_model_name(name: str) -> str:
 
 def ggml_model_path(name: str, config: Optional[Config] = None) -> Path:
     return models_dir(config) / f"ggml-{validate_model_name(name)}.bin"
+
+
+def bundled_models_dir() -> Optional[Path]:
+    """Read-only models shipped inside LocalFlow.app (standalone builds).
+
+    The app stub exports LOCALFLOW_RESOURCES=<bundle>/Contents/Resources;
+    --standalone puts ggml weights in its models/ so first launch needs no
+    download and dictation works fully offline out of the box."""
+    root = os.environ.get("LOCALFLOW_RESOURCES")
+    if root:
+        d = Path(root) / "models"
+        if d.is_dir():
+            return d
+    return None
+
+
+def resolve_model_file(name: str, config: Optional[Config] = None) -> Optional[Path]:
+    """The ggml file to load: the user's data dir wins (their downloads /
+    upgrades), then the copy bundled in the app. None = needs a download."""
+    path = ggml_model_path(name, config)
+    if path.exists():
+        return path
+    bundled = bundled_models_dir()
+    if bundled is not None:
+        candidate = bundled / f"ggml-{validate_model_name(name)}.bin"
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def download_ggml_model(name: str, config: Optional[Config] = None, quiet: bool = False,
@@ -114,7 +143,7 @@ def create_engine(config: Config, progress=None) -> STTEngine:
         # Prefer whisper.cpp when a ggml model is already on disk (offline-first)
         if (
             "whisper.cpp" in installed
-            and (eng.model_path or ggml_model_path(eng.model, config).exists())
+            and (eng.model_path or resolve_model_file(eng.model, config) is not None)
         ):
             backend = "whisper.cpp"
         else:
@@ -136,8 +165,8 @@ def create_engine(config: Config, progress=None) -> STTEngine:
 
         model_path = eng.model_path
         if not model_path:
-            path = ggml_model_path(eng.model, config)
-            if not path.exists():
+            path = resolve_model_file(eng.model, config)
+            if path is None:
                 path = download_ggml_model(eng.model, config, progress=progress)
             model_path = str(path)
         return WhisperCppEngine(

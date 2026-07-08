@@ -17,7 +17,7 @@ While you dictate, the floating pill shows a live waveform, then pulses while Wh
 |---|---|
 | Push-to-talk dictation into any app | ✅ hold a global hotkey, release to insert text at your cursor |
 | Hands-free mode | ✅ toggle on; recording auto-stops on silence (built-in VAD) |
-| AI formatting | ✅ two layers: a local rule engine (filler-word removal, self-corrections "at five — no wait, six" → "at six", spoken commands, spelled-out numbers → digits, spoken emails → `name@domain.com`, capitalization) **plus an optional local-LLM cleanup pass** — LocalFlow auto-detects LM Studio or Ollama and uses whatever chat model you have loaded; falls back to rules when no server is running |
+| AI formatting | ✅ two layers: a local rule engine (filler-word removal, self-corrections "at five — no wait, six" → "at six", spoken commands, spelled-out numbers → digits, spoken emails → `name@domain.com`, capitalization) **plus a local-LLM cleanup pass that runs in-process** (Apple MLX, Qwen3-4B) — no LM Studio required, and a running LM Studio is never disturbed; point `llm.base_url` at any OpenAI-compatible server to use that instead. Falls back to rules when no model is available |
 | Personal dictionary | ✅ names/jargon are fed to Whisper as a bias prompt **and** fuzzy-corrected after transcription; plus text replacements ("omw" → "on my way") |
 | Context awareness / app-aware tone | ✅ per-app profiles (terminal, code editor, chat, email, docs) adjust capitalization & punctuation automatically |
 | Command mode (edit selected text by voice) | ✅ local commands (uppercase, bullet list, snake case, fix punctuation, shorten, …) + free-form edits ("translate to french", "make it friendlier") via the same local LLM |
@@ -30,6 +30,24 @@ While you dictate, the floating pill shows a live waveform, then pulses while Wh
 | Privacy | ✅ **stronger**: 100% offline — Wispr Flow sends audio to the cloud, LocalFlow never does |
 
 ## Installation
+
+### The easy way (macOS, Apple Silicon)
+
+Grab `LocalFlow-<version>.dmg` from the [releases page](../../releases) (or
+build it yourself, below), drag LocalFlow to Applications, and open it —
+that's it. The app is fully self-contained: its own Python runtime, Whisper,
+and MLX are all inside the bundle. Nothing else to install.
+
+First launch: because the app is unsigned, macOS will block it once — go
+to System Settings → Privacy & Security → **Open Anyway** (or run
+`xattr -dr com.apple.quarantine /Applications/LocalFlow.app`). Then grant
+**Microphone**, **Accessibility** and **Input Monitoring** when asked.
+Dictation works immediately and fully offline — the Whisper model ships
+inside the app. The built-in AI-formatting model is one click in Settings
+→ AI formatting (~2.3 GB, once — skipped automatically if LM Studio
+already has the weights on disk).
+
+### The pip way (any platform)
 
 ```bash
 # from a clone of this repo
@@ -55,7 +73,7 @@ Platform notes:
 One double-clickable menu-bar app - no terminal, no LM Studio:
 
 ```bash
-./scripts/build_app.sh --install    # builds dist/LocalFlow.app, copies to /Applications
+./scripts/build_app.sh --install    # dev build: builds dist/LocalFlow.app, copies to /Applications
 open /Applications/LocalFlow.app
 ```
 
@@ -63,16 +81,19 @@ open /Applications/LocalFlow.app
   Open Dashboard, Hands-free Mode and Quit. The dashboard opens as a native
   app window (WKWebView), not a browser tab.
 * `localflow autostart on` starts the app at login (`off` to remove).
-* The AI-formatting model runs **in-process** (Apple MLX). If LM Studio or
-  Ollama happens to be running, LocalFlow uses that server instead; close it
-  and the built-in engine takes over automatically. No weights yet?
-  `localflow llm download` fetches the default model (~2.3 GB, one time).
+* The AI-formatting model runs **in-process** (Apple MLX) and is preferred
+  even when LM Studio/Ollama is running — dictation never hijacks or swaps
+  the model you have loaded there for other work. It reuses weights already
+  in LM Studio's model folder, so there's usually nothing to download; else
+  `localflow llm download` (or the Settings button) fetches the default
+  model (~2.3 GB, one time). Prefer a server anyway? Set `llm.base_url`
+  and it wins.
 * First launch: grant **Microphone**, **Accessibility** and **Input
   Monitoring** to LocalFlow when macOS asks (it's a new app identity).
 * Logs: `~/Library/Logs/LocalFlow.log`. Start at login: System Settings →
   General → Login Items → add LocalFlow.
-* The app launches the daemon from this repo's `venv` - rebuild after moving
-  the repo.
+* The dev build launches the daemon from this repo's `venv` - rebuild after
+  moving the repo. (`--standalone` bundles everything instead.)
 
 ## Developing on it
 
@@ -81,7 +102,8 @@ The app loads code straight from this repo (default builds), so the loop is:
 ```bash
 # edit code, then:
 venv/bin/python -m pytest tests/ -q     # 200+ tests, fully hermetic
-pkill -f localflow.cli && open /Applications/LocalFlow.app   # restart to apply
+pkill -x LocalFlow; open /Applications/LocalFlow.app   # restart to apply
+# (the daemon process IS "LocalFlow" - "pkill -f localflow.cli" no longer matches)
 tail -f ~/Library/Logs/LocalFlow.log    # watch it live
 ```
 
@@ -93,21 +115,22 @@ again once.
 ## Giving it to a friend
 
 ```bash
-./scripts/build_app.sh --standalone    # code + all deps inside the bundle
-zip -ry LocalFlow.zip dist/LocalFlow.app
+./scripts/build_app.sh --standalone --dmg   # everything inside the bundle:
+                                            # its own Python runtime + deps
 ```
 
-On the friend's Mac (Apple Silicon):
+Send them `dist/LocalFlow-<version>.dmg`. On their Mac (Apple Silicon):
 
-1. `brew install python@3.13` (the bundle carries its own deps but uses the
-   system Python framework).
-2. Unzip, drag LocalFlow.app to /Applications, then **right-click → Open**
-   (unsigned app; one-time Gatekeeper override) - or run
+1. Open the DMG, drag LocalFlow to Applications. macOS blocks unsigned
+   apps once: System Settings → Privacy & Security → **Open Anyway** - or
    `xattr -dr com.apple.quarantine /Applications/LocalFlow.app`.
-3. Grant Microphone / Accessibility / Input Monitoring when prompted.
-4. Whisper models download automatically from the Settings model picker; for
-   AI formatting they run LM Studio/Ollama, or grab the built-in model with
-   `/Applications/LocalFlow.app/Contents/MacOS/LocalFlow -m localflow.cli llm download`.
+2. Grant Microphone / Accessibility / Input Monitoring when prompted.
+3. Done - dictation works immediately, fully offline (the Whisper model is
+   inside the app). The built-in AI-formatting model is one click in
+   Settings → AI formatting.
+
+Nothing to install first - no Homebrew, no Python. (Tagged releases build
+the same DMG automatically via GitHub Actions; see `.github/workflows/release.yml`.)
 
 ## Usage (terminal)
 
@@ -149,8 +172,9 @@ mic (sounddevice) ──► Recorder ──► VAD / RMS normalize ──► STT
                                                                     │  ◄─ dictionary bias prompt
                                                                     ▼
    focused app ◄── Injector (⌘V paste / xdotool / pynput) ◄── Formatter ◄── dictionary correction
-       ▲                                                        (rule engine + local LLM cleanup
-       │                                                         via LM Studio/Ollama, app tone)
+       ▲                                                        (rule engine + local LLM cleanup:
+       │                                                         in-process MLX, or LM Studio/
+       │                                                         Ollama via base_url; app tone)
   HotkeyListener (pynput)                                               │
   Tray icon (pystray)          History (SQLite) ◄── FlowController ◄────┘
   Dashboard (localhost)  ◄────────┘
@@ -162,7 +186,7 @@ Every OS-dependent piece (microphone, hotkeys, window detection, typing) sits be
 
 ```bash
 pip install -e ".[dev]"
-pytest                # 159 tests
+pytest                # 230+ tests
 ```
 
 The suite includes true end-to-end tests: speech is synthesized with `espeak-ng`, transcribed by a **real Whisper model** (whisper.cpp `ggml-tiny`), formatted, and injected — no mocks. Those tests auto-skip when `espeak-ng` or the model isn't available; everything else runs anywhere. Drop a model at `tests/models/ggml-tiny.bin` (or `~/.local/share/localflow/models/`) to enable them.

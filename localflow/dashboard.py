@@ -124,8 +124,35 @@ class DashboardServer:
         self.on_audio_changed = None
         self.on_engine_changed = None
         self.engine_status = None  # () -> {"switching": bool, "message": str}
+        # Built-in LLM download state (POST /api/llm/download runs it in a
+        # background thread; GET /api/llm reports it so the UI can poll).
+        self._llm_download = {"downloading": False, "message": ""}
         self._httpd: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
+
+    def _start_llm_download(self) -> None:
+        if self._llm_download["downloading"]:
+            return
+        self._llm_download.update(downloading=True, message="starting...")
+
+        def worker() -> None:
+            from .llm_local import download_default_model
+
+            try:
+                download_default_model(
+                    self.controller.config.resolved_data_dir(),
+                    progress=lambda msg: self._llm_download.update(message=msg),
+                )
+                self._llm_download["message"] = "loading model..."
+                self.controller.llm.probe(force=True)
+                self.controller.llm.warm_up()
+                self._llm_download["message"] = "ready"
+            except Exception as exc:
+                self._llm_download["message"] = f"download failed: {exc}"
+            finally:
+                self._llm_download["downloading"] = False
+
+        threading.Thread(target=worker, daemon=True).start()
 
     # --------------------------------------------------------------- server
 
@@ -137,6 +164,29 @@ class DashboardServer:
             def log_message(self, *args) -> None:  # quiet
                 pass
 
+            def _reject_cross_origin(self) -> bool:
+                """Refuse requests not from the dashboard itself.
+
+                The API can read dictation history and rewrite the config
+                (including llm.base_url), so a malicious webpage must not be
+                able to reach it: a plain cross-site fetch to 127.0.0.1
+                carries the attacker's Origin, and DNS rebinding shows up as
+                a foreign Host header. Same-origin requests from the
+                dashboard page (or its WKWebView) always pass both checks.
+                """
+                host = (self.headers.get("Host") or "").strip()
+                hostname = host.rsplit(":", 1)[0] if ":" in host else host
+                if hostname not in ("127.0.0.1", "localhost", "[::1]", server.host):
+                    self._send({"error": "forbidden host"}, status=403)
+                    return True
+                origin = (self.headers.get("Origin") or "").strip()
+                if origin and urlparse(origin).hostname not in (
+                        "127.0.0.1", "localhost", "::1", server.host):
+                    # includes Origin: null (sandboxed iframes, file:// pages)
+                    self._send({"error": "forbidden origin"}, status=403)
+                    return True
+                return False
+
             def _send(self, payload, status: int = 200, ctype: str = "application/json") -> None:
                 body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
                 self.send_response(status)
@@ -146,6 +196,8 @@ class DashboardServer:
                 self.wfile.write(body)
 
             def do_GET(self) -> None:  # noqa: N802
+                if self._reject_cross_origin():
+                    return
                 url = urlparse(self.path)
                 if url.path in ("/", "/index.html"):
                     self._send(_load_page().encode(), ctype="text/html; charset=utf-8")
@@ -182,11 +234,15 @@ class DashboardServer:
                         ]
                     self._send({"suggestions": suggestions})
                 elif url.path == "/api/engine":
-                    from .engines.registry import models_dir
+                    from .engines.registry import bundled_models_dir, models_dir
 
+                    names = {p.name for p in
+                             models_dir(controller.config).glob("ggml-*.bin")}
+                    bundled = bundled_models_dir()
+                    if bundled is not None:
+                        names |= {p.name for p in bundled.glob("ggml-*.bin")}
                     downloaded = sorted(
-                        p.name[len("ggml-"):-len(".bin")]
-                        for p in models_dir(controller.config).glob("ggml-*.bin")
+                        n[len("ggml-"):-len(".bin")] for n in names
                     )
                     payload = {
                         "model": controller.config.engine.model,
@@ -223,9 +279,11 @@ class DashboardServer:
                     available = controller.llm.probe(force=force)
                     self._send({
                         "available": available,
+                        "mode": controller.llm.mode,
                         "base_url": controller.llm.base_url,
                         "model": controller.llm.model,
                         "models": controller.llm.models,
+                        "download": dict(server._llm_download),
                     })
                 elif url.path == "/api/state":
                     self._send({
@@ -236,6 +294,8 @@ class DashboardServer:
                     self._send({"error": "not found"}, status=404)
 
             def do_POST(self) -> None:  # noqa: N802
+                if self._reject_cross_origin():
+                    return
                 url = urlparse(self.path)
                 length = int(self.headers.get("Content-Length") or 0)
                 try:
@@ -288,6 +348,9 @@ class DashboardServer:
                         except Exception:
                             combo = None
                     self._send({"combo": combo})
+                elif url.path == "/api/llm/download":
+                    server._start_llm_download()
+                    self._send({"ok": True, "download": dict(server._llm_download)})
                 elif url.path == "/api/history/delete":
                     if data.get("all"):
                         controller.history.clear()
@@ -324,8 +387,15 @@ class DashboardServer:
                             if not hasattr(section, sub_key):
                                 continue
                             current = getattr(section, sub_key)
-                            if current is None or isinstance(sub_value, type(current)) \
-                                    or (isinstance(current, float) and isinstance(sub_value, (int, float))):
+                            # bool is a subclass of int: without the explicit
+                            # checks, JSON true could land in an int field.
+                            if isinstance(current, bool) or isinstance(sub_value, bool):
+                                ok = isinstance(current, bool) and isinstance(sub_value, bool)
+                            elif isinstance(current, float):
+                                ok = isinstance(sub_value, (int, float))
+                            else:
+                                ok = current is None or isinstance(sub_value, type(current))
+                            if ok:
                                 setattr(section, sub_key, sub_value)
 
         try:
