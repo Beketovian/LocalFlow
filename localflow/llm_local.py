@@ -129,31 +129,42 @@ class EmbeddedEngine:
 def download_default_model(data_dir: Path, progress=None) -> Path:
     """Fetch the default model from Hugging Face into LocalFlow's data dir.
 
-    ~2.3 GB; called by `localflow llm download` and the first-run setup.
+    ~2.3 GB; called by `localflow llm download` and the dashboard's
+    "Download built-in model" button. `progress` (optional) receives human
+    strings, with an overall percentage while the weights stream in.
     """
     dest = default_llm_dir(data_dir) / DEFAULT_MODEL_NAME
     dest.mkdir(parents=True, exist_ok=True)
-    api = f"https://huggingface.co/api/models/{DEFAULT_REPO}"
+    # blobs=true adds per-file sizes, which is what makes a real % possible
+    api = f"https://huggingface.co/api/models/{DEFAULT_REPO}?blobs=true"
     with urllib.request.urlopen(api, timeout=30) as resp:
         siblings = json.loads(resp.read())["siblings"]
-    files = [s["rfilename"] for s in siblings
+    files = [(s["rfilename"], s.get("size") or 0) for s in siblings
              if not s["rfilename"].startswith(".") and s["rfilename"] != "README.md"]
-    for name in files:
+    total = sum(size for _, size in files) or 1
+    done = 0
+    for name, size in files:
         target = dest / name
         url = f"https://huggingface.co/{DEFAULT_REPO}/resolve/main/{name}"
-        if target.exists() and target.stat().st_size > 0:
+        have = target.stat().st_size if target.exists() else -1
+        if have == size or (not size and have > 0):
+            done += size
             continue
-        if progress:
-            progress(f"  downloading {name}...")
         tmp = target.with_suffix(target.suffix + ".part")
         req = urllib.request.Request(url)
         with urllib.request.urlopen(req, timeout=60) as resp, open(tmp, "wb") as out:
+            file_done = 0
             while True:
                 chunk = resp.read(1 << 20)
                 if not chunk:
                     break
                 out.write(chunk)
+                file_done += len(chunk)
+                if progress and size > 1 << 22:  # only weights merit a %
+                    progress(f"downloading {name}... "
+                             f"{(done + file_done) / total:.0%}")
         tmp.rename(target)
+        done += size
     if progress:
-        progress(f"  model ready: {dest}")
+        progress(f"model ready: {dest}")
     return dest

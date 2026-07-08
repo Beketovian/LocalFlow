@@ -3,15 +3,23 @@
 # dictation daemon. No terminal, no LM Studio (the LLM runs in-process).
 #
 #   ./scripts/build_app.sh                build into dist/LocalFlow.app
+#                                         (dev build: runs code from this
+#                                         repo's venv; rebuild-free edits)
 #   ./scripts/build_app.sh --install      also copy to /Applications
-#   ./scripts/build_app.sh --standalone   copy code + deps INTO the bundle
-#                                         (~450 MB; survives moving/deleting
-#                                         this repo, still needs Homebrew's
-#                                         python@3.13 on the machine)
+#   ./scripts/build_app.sh --standalone   fully self-contained bundle: its
+#                                         own Python runtime + all deps
+#                                         inside (~700 MB). Works on any
+#                                         Apple Silicon Mac - nothing to
+#                                         install first.
+#   ./scripts/build_app.sh --standalone --dmg
+#                                         also produce a drag-to-install
+#                                         dist/LocalFlow-<version>.dmg
 #
-# The bundle launches the daemon from this repo's venv (absolute path baked
-# in at build time), logs to ~/Library/Logs/LocalFlow.log, and gets its own
-# permission identity: on first launch macOS will ask for Microphone,
+# The dev build launches the daemon from this repo's venv (absolute path
+# baked in at build time); the standalone build embeds a relocatable CPython
+# (python-build-standalone) so the target machine needs no Homebrew, no
+# Python, nothing. Both log to ~/Library/Logs/LocalFlow.log and get their
+# own permission identity: on first launch macOS asks for Microphone,
 # Accessibility and Input Monitoring for "LocalFlow" - grant all three.
 
 set -euo pipefail
@@ -24,15 +32,17 @@ VERSION="$("$PY" -c 'import localflow; print(localflow.__version__)')"
 
 INSTALL=0
 STANDALONE=0
+DMG=0
 for arg in "$@"; do
     case "$arg" in
         --install) INSTALL=1 ;;
         --standalone) STANDALONE=1 ;;
+        --dmg) DMG=1 ;;
         *) echo "unknown option: $arg"; exit 1 ;;
     esac
 done
 
-[ -x "$VENV/bin/localflow" ] || { echo "venv missing; run: python -m venv venv && venv/bin/pip install -e '.[whispercpp,desktop]' mlx-lm 'transformers<5'"; exit 1; }
+[ -x "$VENV/bin/localflow" ] || { echo "venv missing; run: python3 -m venv venv && venv/bin/pip install -e '.[whispercpp,desktop,llm]'"; exit 1; }
 
 echo "Building LocalFlow.app v$VERSION"
 rm -rf "$APP"
@@ -61,32 +71,94 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# ------------------------------------------------------------------ stub
+# ---------------------------------------------------------------- payload
 # The main executable is a small compiled binary that runs the daemon
 # in-process through libpython (see scripts/app_stub.c for why: TCC ties
 # permissions to the main executable's identity - shell launchers that
 # exec another binary leave the toggle ON but the process untrusted).
-SITE_PACKAGES="$("$PY" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
-LIBPYTHON="$("$PY" -c 'import sysconfig; import os.path as p; print(p.join(sysconfig.get_config_var("LIBDIR"), "libpython3.13.dylib"))')"
-[ -f "$LIBPYTHON" ] || { echo "libpython not found at $LIBPYTHON"; exit 1; }
+STUB_DEFS=()
 
 if [ "$STANDALONE" = 1 ]; then
-    # Copy the code and every dependency into the bundle: the app keeps
-    # working if this repo moves or the venv is rebuilt. Data files inside
-    # Resources/ are fine with codesign (unlike Contents/ or MacOS/).
-    echo "  copying dependencies into the bundle (standalone)..."
+    # Fully self-contained: a relocatable CPython runtime + every dependency
+    # live inside the bundle. python-build-standalone is built for exactly
+    # this (no baked absolute paths); Homebrew's Python is not relocatable.
     PYROOT="$APP/Contents/Resources/python"
-    mkdir -p "$PYROOT"
-    rsync -a --exclude "__pycache__" "$SITE_PACKAGES/" "$PYROOT/site-packages/"
-    rsync -a --exclude "__pycache__" "$REPO/localflow" "$PYROOT/app/"
-    STUB_PYTHONPATH="@RESOURCES@/python/site-packages:@RESOURCES@/python/app"
+    RUNTIME="$PYROOT/runtime"
+    CACHE="${LOCALFLOW_BUILD_CACHE:-$HOME/Library/Caches/localflow-build}"
+    mkdir -p "$CACHE" "$PYROOT"
+
+    ARCH="$(uname -m)"
+    case "$ARCH" in
+        arm64) PBS_ARCH="aarch64-apple-darwin" ;;
+        x86_64) PBS_ARCH="x86_64-apple-darwin" ;;
+        *) echo "unsupported architecture: $ARCH"; exit 1 ;;
+    esac
+
+    # Resolve the runtime tarball: pin via LOCALFLOW_PYTHON_URL, or take the
+    # newest CPython 3.13 install_only build from the latest release.
+    PBS_URL="${LOCALFLOW_PYTHON_URL:-}"
+    if [ -z "$PBS_URL" ]; then
+        echo "  resolving python-build-standalone (cpython 3.13, $PBS_ARCH)..."
+        PBS_URL="$(curl -fsSL https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest \
+            | "$PY" -c '
+import json, sys
+release = json.load(sys.stdin)
+arch = sys.argv[1]
+names = [a["browser_download_url"] for a in release["assets"]
+         if a["name"].startswith("cpython-3.13.")
+         and a["name"].endswith(f"{arch}-install_only.tar.gz")]
+if not names:
+    sys.exit("no matching cpython 3.13 asset in latest release")
+print(names[0])' "$PBS_ARCH")"
+    fi
+    TARBALL="$CACHE/$(basename "$PBS_URL")"
+    if [ ! -f "$TARBALL" ]; then
+        echo "  downloading $(basename "$PBS_URL")..."
+        curl -fL --retry 3 -o "$TARBALL.part" "$PBS_URL"
+        mv "$TARBALL.part" "$TARBALL"
+    fi
+
+    echo "  unpacking Python runtime..."
+    UNPACK="$(mktemp -d)"
+    tar -xzf "$TARBALL" -C "$UNPACK"
+    mv "$UNPACK/python" "$RUNTIME"
+    rm -rf "$UNPACK"
+    # Dead weight the daemon never imports (~90 MB of stdlib test suite etc.)
+    rm -rf "$RUNTIME"/lib/python3.*/test \
+           "$RUNTIME"/lib/python3.*/idlelib \
+           "$RUNTIME"/lib/python3.*/turtledemo
+
+    echo "  installing localflow + dependencies into the bundle..."
+    "$RUNTIME/bin/python3" -m pip install --quiet --no-compile \
+        --target "$PYROOT/site-packages" "$REPO[whispercpp,desktop,llm]"
+
+    LIBPYTHON_NAME="$(cd "$RUNTIME/lib" && ls libpython3.*.dylib | head -1)"
+    [ -n "$LIBPYTHON_NAME" ] || { echo "no libpython in runtime"; exit 1; }
+    STUB_DEFS+=(
+        -DLIBPYTHON_PATH="\"@RESOURCES@/python/runtime/lib/$LIBPYTHON_NAME\""
+        -DLOCALFLOW_PYTHONPATH="\"@RESOURCES@/python/site-packages\""
+        -DLOCALFLOW_PYTHONHOME="\"@RESOURCES@/python/runtime\""
+    )
+
+    # Smoke test with the exact interpreter + path the stub will use.
+    PYTHONPATH="$PYROOT/site-packages" "$RUNTIME/bin/python3" \
+        -c "import localflow, mlx_lm, pywhispercpp, sounddevice" \
+        || { echo "bundled runtime can't import the app - build broken"; exit 1; }
 else
-    STUB_PYTHONPATH="$SITE_PACKAGES:$REPO"
+    SITE_PACKAGES="$("$PY" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+    LIBPYTHON="$("$PY" -c 'import sysconfig; import os.path as p; print(p.join(sysconfig.get_config_var("LIBDIR"), "libpython3.13.dylib"))')"
+    [ -f "$LIBPYTHON" ] || { echo "libpython not found at $LIBPYTHON"; exit 1; }
+    STUB_DEFS+=(
+        -DLIBPYTHON_PATH="\"$LIBPYTHON\""
+        -DLOCALFLOW_PYTHONPATH="\"$SITE_PACKAGES:$REPO\""
+    )
+    # Smoke test: the stub hardwires "-m localflow.cli run"; verify the
+    # import path works with the same interpreter the stub will use.
+    PYTHONPATH="$SITE_PACKAGES:$REPO" "$PY" -c "import localflow" \
+        || { echo "interpreter can't import localflow - check venv"; exit 1; }
 fi
 
-clang -O2 -Wall \
-    -DLIBPYTHON_PATH="\"$LIBPYTHON\"" \
-    -DLOCALFLOW_PYTHONPATH="\"$STUB_PYTHONPATH\"" \
+clang -O2 -Wall "${STUB_DEFS[@]}" \
     -o "$APP/Contents/MacOS/LocalFlow" "$REPO/scripts/app_stub.c"
 
 # ------------------------------------------------------------------- icon
@@ -103,19 +175,32 @@ done
 iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/LocalFlow.icns"
 rm -rf "$ICONSET"
 
-# ------------------------------------------------------------- smoke test
-# The stub hardwires "-m localflow.cli run"; verify the import path works
-# with the same interpreter + PYTHONPATH the stub will use.
-PYTHONPATH="$SITE_PACKAGES:$REPO" "$PY" -c "import localflow, mlx_lm" \
-    || { echo "interpreter can't import localflow - check venv"; exit 1; }
-
 # ------------------------------------------------------------------- sign
-# Ad-hoc signature gives the bundle a stable identity for the TCC
+# Ad-hoc signatures give the bundle a stable identity for the TCC
 # permission prompts (Accessibility / Input Monitoring / Microphone).
+# Nested Mach-O files are signed first so the outer seal stays valid.
+if [ "$STANDALONE" = 1 ]; then
+    find "$APP/Contents/Resources/python" \
+        \( -name "*.dylib" -o -name "*.so" \) -type f -print0 \
+        | xargs -0 codesign --force -s - 2> /dev/null
+    codesign --force -s - "$APP/Contents/Resources/python/runtime/bin/"* 2> /dev/null || true
+fi
 codesign --force -s - "$APP/Contents/MacOS/LocalFlow" 2> /dev/null
 codesign --force -s - "$APP" 2> /dev/null
 
 echo "Built: $APP"
+
+if [ "$DMG" = 1 ]; then
+    DMG_PATH="$REPO/dist/LocalFlow-$VERSION.dmg"
+    STAGE="$(mktemp -d)"
+    cp -R "$APP" "$STAGE/"
+    ln -s /Applications "$STAGE/Applications"
+    rm -f "$DMG_PATH"
+    hdiutil create -volname "LocalFlow" -srcfolder "$STAGE" -ov \
+        -format UDZO "$DMG_PATH" > /dev/null
+    rm -rf "$STAGE"
+    echo "Built: $DMG_PATH"
+fi
 
 if [ "$INSTALL" = 1 ]; then
     rm -rf "/Applications/LocalFlow.app"
