@@ -140,6 +140,22 @@ print(names[0])' "$PBS_ARCH")"
         -DLOCALFLOW_PYTHONHOME="\"@RESOURCES@/python/runtime\""
     )
 
+    # Bundle a Whisper model so dictation works offline on first launch
+    # (no multi-minute silent download). "base" matches the default config;
+    # override with LOCALFLOW_BUNDLE_WHISPER=small etc., or "none" to skip.
+    WHISPER_MODEL="${LOCALFLOW_BUNDLE_WHISPER:-base}"
+    if [ "$WHISPER_MODEL" != "none" ]; then
+        GGML="$CACHE/ggml-$WHISPER_MODEL.bin"
+        if [ ! -f "$GGML" ]; then
+            echo "  downloading Whisper '$WHISPER_MODEL' model for the bundle..."
+            curl -fL --retry 3 -o "$GGML.part" \
+                "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-$WHISPER_MODEL.bin"
+            mv "$GGML.part" "$GGML"
+        fi
+        mkdir -p "$APP/Contents/Resources/models"
+        cp "$GGML" "$APP/Contents/Resources/models/"
+    fi
+
     # Smoke test with the exact interpreter + path the stub will use.
     PYTHONPATH="$PYROOT/site-packages" "$RUNTIME/bin/python3" \
         -c "import localflow, mlx_lm, pywhispercpp, sounddevice" \

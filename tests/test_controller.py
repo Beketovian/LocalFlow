@@ -261,3 +261,33 @@ class TestVoiceActions:
         event = controller.stop_recording()
         assert event.auto_sent is False  # injector lacks press_return
         assert injector.received == ["Hello there "]
+
+
+class TestLazyEngineCreation:
+    def test_concurrent_first_use_creates_one_engine(self):
+        # The startup warm-up thread and an eager first dictation both hit
+        # the lazy engine property; exactly one model must be created.
+        import threading
+
+        config = Config()
+        config.engine.backend = "mock"
+        config.save_history = False
+        controller = FlowController(
+            config=config,
+            recorder=ArrayRecorder(speechlike()),
+            injector=CallbackInjector(),
+            history=History(":memory:"),
+            sounds=SoundPlayer(enabled=False),
+        )
+        engines = []
+        threads = [
+            threading.Thread(target=lambda: engines.append(controller.ensure_engine()))
+            for _ in range(8)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert len(engines) == 8
+        assert len({id(e) for e in engines}) == 1
+        assert controller.engine is engines[0]

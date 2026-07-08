@@ -234,11 +234,15 @@ class DashboardServer:
                         ]
                     self._send({"suggestions": suggestions})
                 elif url.path == "/api/engine":
-                    from .engines.registry import models_dir
+                    from .engines.registry import bundled_models_dir, models_dir
 
+                    names = {p.name for p in
+                             models_dir(controller.config).glob("ggml-*.bin")}
+                    bundled = bundled_models_dir()
+                    if bundled is not None:
+                        names |= {p.name for p in bundled.glob("ggml-*.bin")}
                     downloaded = sorted(
-                        p.name[len("ggml-"):-len(".bin")]
-                        for p in models_dir(controller.config).glob("ggml-*.bin")
+                        n[len("ggml-"):-len(".bin")] for n in names
                     )
                     payload = {
                         "model": controller.config.engine.model,

@@ -75,6 +75,13 @@ int main(int argc, char *argv[]) {
     setenv("PYTHONUNBUFFERED", "1", 1);
     setenv("PYTHONPATH", pythonpath, 1);
 
+    /* Where read-only bundled assets live (e.g. Resources/models with the
+     * Whisper weights standalone builds ship). */
+    char resources[PATH_MAX];
+    resources_dir(resources, sizeof resources);
+    if (resources[0] != '\0')
+        setenv("LOCALFLOW_RESOURCES", resources, 1);
+
 #ifdef LOCALFLOW_PYTHONHOME
     /* Standalone bundles carry their own Python runtime: without
      * PYTHONHOME, libpython would look for the stdlib next to this

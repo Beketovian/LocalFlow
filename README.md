@@ -38,11 +38,14 @@ build it yourself, below), drag LocalFlow to Applications, and open it —
 that's it. The app is fully self-contained: its own Python runtime, Whisper,
 and MLX are all inside the bundle. Nothing else to install.
 
-First launch: grant **Microphone**, **Accessibility** and **Input
-Monitoring** when macOS asks, and right-click → Open the first time (the
-app is unsigned). Whisper models download themselves; the built-in AI
-formatting model is one click in Settings → AI formatting (~2.3 GB, once —
-skipped automatically if LM Studio already has the weights on disk).
+First launch: because the app is unsigned, macOS will block it once — go
+to System Settings → Privacy & Security → **Open Anyway** (or run
+`xattr -dr com.apple.quarantine /Applications/LocalFlow.app`). Then grant
+**Microphone**, **Accessibility** and **Input Monitoring** when asked.
+Dictation works immediately and fully offline — the Whisper model ships
+inside the app. The built-in AI-formatting model is one click in Settings
+→ AI formatting (~2.3 GB, once — skipped automatically if LM Studio
+already has the weights on disk).
 
 ### The pip way (any platform)
 
@@ -118,12 +121,13 @@ again once.
 
 Send them `dist/LocalFlow-<version>.dmg`. On their Mac (Apple Silicon):
 
-1. Open the DMG, drag LocalFlow to Applications, **right-click → Open**
-   (unsigned app; one-time Gatekeeper override) - or run
+1. Open the DMG, drag LocalFlow to Applications. macOS blocks unsigned
+   apps once: System Settings → Privacy & Security → **Open Anyway** - or
    `xattr -dr com.apple.quarantine /Applications/LocalFlow.app`.
 2. Grant Microphone / Accessibility / Input Monitoring when prompted.
-3. Done. Whisper models download automatically; the built-in AI-formatting
-   model is one click in Settings → AI formatting.
+3. Done - dictation works immediately, fully offline (the Whisper model is
+   inside the app). The built-in AI-formatting model is one click in
+   Settings → AI formatting.
 
 Nothing to install first - no Homebrew, no Python. (Tagged releases build
 the same DMG automatically via GitHub Actions; see `.github/workflows/release.yml`.)

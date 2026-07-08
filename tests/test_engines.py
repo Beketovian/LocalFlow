@@ -4,7 +4,11 @@ import pytest
 from localflow.config import Config
 from localflow.engines import available_backends, create_engine
 from localflow.engines.mock import MockEngine
-from localflow.engines.registry import ggml_model_path
+from localflow.engines.registry import (
+    bundled_models_dir,
+    ggml_model_path,
+    resolve_model_file,
+)
 
 
 class TestMockEngine:
@@ -50,6 +54,47 @@ class TestRegistry:
         config.engine.model_path = str(model_path)
         engine = create_engine(config)
         assert engine.name == "whisper.cpp"
+
+
+class TestBundledModels:
+    """Standalone LocalFlow.app ships ggml weights in Resources/models;
+    the stub advertises the dir via LOCALFLOW_RESOURCES."""
+
+    def test_no_env_no_bundle(self, monkeypatch):
+        monkeypatch.delenv("LOCALFLOW_RESOURCES", raising=False)
+        assert bundled_models_dir() is None
+
+    def test_bundle_dir_found(self, tmp_path, monkeypatch):
+        (tmp_path / "models").mkdir()
+        monkeypatch.setenv("LOCALFLOW_RESOURCES", str(tmp_path))
+        assert bundled_models_dir() == tmp_path / "models"
+
+    def test_resolve_prefers_data_dir_over_bundle(self, tmp_path, monkeypatch):
+        config = Config()
+        config.data_dir = str(tmp_path / "data")
+        user_copy = ggml_model_path("base", config)
+        user_copy.parent.mkdir(parents=True, exist_ok=True)
+        user_copy.write_bytes(b"user")
+        bundle = tmp_path / "resources" / "models"
+        bundle.mkdir(parents=True)
+        (bundle / "ggml-base.bin").write_bytes(b"bundled")
+        monkeypatch.setenv("LOCALFLOW_RESOURCES", str(tmp_path / "resources"))
+        assert resolve_model_file("base", config) == user_copy
+
+    def test_resolve_falls_back_to_bundle(self, tmp_path, monkeypatch):
+        config = Config()
+        config.data_dir = str(tmp_path / "data")
+        bundle = tmp_path / "resources" / "models"
+        bundle.mkdir(parents=True)
+        (bundle / "ggml-base.bin").write_bytes(b"bundled")
+        monkeypatch.setenv("LOCALFLOW_RESOURCES", str(tmp_path / "resources"))
+        assert resolve_model_file("base", config) == bundle / "ggml-base.bin"
+
+    def test_resolve_missing_everywhere(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("LOCALFLOW_RESOURCES", raising=False)
+        config = Config()
+        config.data_dir = str(tmp_path)
+        assert resolve_model_file("base", config) is None
 
 
 class TestNoiseAnnotations:
