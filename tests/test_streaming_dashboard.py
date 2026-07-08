@@ -132,6 +132,68 @@ class TestDashboard:
         _, body = self._get("/api/state")
         assert json.loads(body)["status"] == "idle"
 
+    def test_cross_origin_post_rejected(self):
+        # A malicious webpage's fetch() to 127.0.0.1 carries its Origin; the
+        # API must refuse it or the page could rewrite llm.base_url and
+        # exfiltrate dictations.
+        req = urllib.request.Request(
+            self.base + "/api/settings",
+            data=json.dumps({"llm": {"base_url": "http://evil.example/v1"}}).encode(),
+            headers={"Origin": "https://evil.example"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            code = 200
+        except urllib.error.HTTPError as exc:
+            code = exc.code
+        assert code == 403
+        assert self.controller.config.llm.base_url != "http://evil.example/v1"
+
+    def test_rebound_host_rejected(self):
+        # DNS rebinding: the request reaches us, but Host is the attacker's.
+        req = urllib.request.Request(self.base + "/api/history")
+        req.add_header("Host", "evil.example")
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            code = 200
+        except urllib.error.HTTPError as exc:
+            code = exc.code
+        assert code == 403
+
+    def test_same_origin_allowed(self):
+        req = urllib.request.Request(
+            self.base + "/api/state",
+            headers={"Origin": f"http://127.0.0.1:{self.port}"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            assert resp.status == 200
+
+    def test_bool_never_lands_in_numeric_setting(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            self.controller.config, "save", lambda path=None: tmp_path / "c.json"
+        )
+        before = self.controller.config.llm.timeout
+        self._post("/api/settings", {"llm": {"timeout": True}})
+        assert self.controller.config.llm.timeout == before
+
+    def test_llm_download_endpoint(self, monkeypatch):
+        import localflow.llm_local as llm_local
+
+        calls = []
+        monkeypatch.setattr(
+            llm_local, "download_default_model",
+            lambda data_dir, progress=None: calls.append(data_dir),
+        )
+        status, body = self._post("/api/llm/download", {})
+        assert status == 200
+        deadline = time.time() + 5
+        while self.server._llm_download["downloading"] and time.time() < deadline:
+            time.sleep(0.05)
+        assert calls, "download worker never ran"
+        _, body = self._get("/api/llm")
+        assert json.loads(body)["download"]["downloading"] is False
+
     def test_404(self):
         try:
             self._get("/api/nonsense")

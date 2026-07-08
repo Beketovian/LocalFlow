@@ -49,9 +49,24 @@ class History:
                 app TEXT DEFAULT '',
                 language TEXT DEFAULT '',
                 duration REAL DEFAULT 0,
-                mode TEXT DEFAULT 'dictation'
+                mode TEXT DEFAULT 'dictation',
+                words INTEGER
             )"""
         )
+        # Word counts used to be recomputed from every row's text on each
+        # stats() call - O(everything) 6x/minute from the dashboard. They are
+        # stored per row now; older databases get the column backfilled once.
+        cols = {row[1] for row in self._db.execute("PRAGMA table_info(history)")}
+        if "words" not in cols:
+            self._db.execute("ALTER TABLE history ADD COLUMN words INTEGER")
+        rows = self._db.execute(
+            "SELECT id, formatted_text FROM history WHERE words IS NULL"
+        ).fetchall()
+        if rows:
+            self._db.executemany(
+                "UPDATE history SET words = ? WHERE id = ?",
+                [(len(text.split()), rid) for rid, text in rows],
+            )
         self._db.commit()
 
     def add(
@@ -65,9 +80,10 @@ class History:
         timestamp: Optional[float] = None,
     ) -> int:
         cur = self._db.execute(
-            "INSERT INTO history (timestamp, raw_text, formatted_text, app, language, duration, mode)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (timestamp or time.time(), raw_text, formatted_text, app, language, duration, mode),
+            "INSERT INTO history (timestamp, raw_text, formatted_text, app, language, duration, mode, words)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (timestamp or time.time(), raw_text, formatted_text, app, language,
+             duration, mode, len(formatted_text.split())),
         )
         self._db.commit()
         return int(cur.lastrowid)
@@ -100,19 +116,26 @@ class History:
 
     def stats(self, now: Optional[float] = None) -> Stats:
         now = now or time.time()
-        rows = self._db.execute(
-            "SELECT timestamp, formatted_text, duration FROM history"
-        ).fetchall()
-        if not rows:
+        total_entries, total_words, total_audio = self._db.execute(
+            "SELECT COUNT(*), COALESCE(SUM(words), 0), COALESCE(SUM(duration), 0)"
+            " FROM history"
+        ).fetchone()
+        if not total_entries:
             return Stats()
-        total_words = sum(len(r[1].split()) for r in rows)
-        total_audio = sum(r[2] for r in rows)
         wpm = (total_words / (total_audio / 60.0)) if total_audio > 0 else 0.0
 
         day = 86400
-        days_with_activity = {int((r[0]) // day) for r in rows}
         today = int(now // day)
-        words_today = sum(len(r[1].split()) for r in rows if int(r[0] // day) == today)
+        days_with_activity = {
+            row[0] for row in self._db.execute(
+                "SELECT DISTINCT CAST(timestamp / 86400 AS INTEGER) FROM history"
+            )
+        }
+        words_today = self._db.execute(
+            "SELECT COALESCE(SUM(words), 0) FROM history"
+            " WHERE timestamp >= ? AND timestamp < ?",
+            (today * day, (today + 1) * day),
+        ).fetchone()[0]
         streak = 0
         d = today
         # streak counts today if active, otherwise starts from yesterday
@@ -122,7 +145,7 @@ class History:
             streak += 1
             d -= 1
         return Stats(
-            total_entries=len(rows),
+            total_entries=total_entries,
             total_words=total_words,
             total_audio_seconds=total_audio,
             average_wpm=round(wpm, 1),

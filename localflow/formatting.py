@@ -304,7 +304,7 @@ _SENTENCE_START = re.compile(r"(^|[.!?…]\s+|\n)([a-zà-ÿ])")
 
 def capitalize_sentences(text: str) -> str:
     text = _SENTENCE_START.sub(lambda m: m.group(1) + m.group(2).upper(), text)
-    text = re.sub(r"\bi\b", "I", text)
+    text = re.sub(r"\bi\b(?!\.[a-z])", "I", text)  # lookahead spares "i.e."
     text = re.sub(r"\bi'(m|ve|ll|d)\b", lambda m: "I'" + m.group(1), text)
     return text
 

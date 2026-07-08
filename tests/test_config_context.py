@@ -38,6 +38,22 @@ class TestConfig:
         cfg = Config.load(path)
         assert cfg.engine.model == "tiny"
 
+    def test_save_writes_back_to_loaded_path(self, tmp_path):
+        # A daemon started with --config custom.json must never clobber the
+        # default config file when it self-saves (dashboard edits, repairs).
+        path = tmp_path / "custom.json"
+        Config().save(path)
+        cfg = Config.load(path)
+        cfg.user_name = "Andrew"
+        saved_to = cfg.save()  # no explicit path
+        assert saved_to == path
+        assert Config.load(path).user_name == "Andrew"
+
+    def test_source_path_not_serialized(self, tmp_path):
+        path = tmp_path / "c.json"
+        cfg = Config.load(path)
+        assert "source_path" not in cfg.to_dict()
+
 
 class TestProfiles:
     def test_terminal_profile_matches(self):
