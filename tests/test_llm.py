@@ -114,7 +114,7 @@ class TestRewrite:
         assert client.rewrite("um hello world") == "cleaned text"
         sent = fake_server.requests[0]
         assert sent["model"] == "google/gemma-4-26b-a4b"
-        assert "um hello world" in sent["messages"][1]["content"]
+        assert "um hello world" in sent["messages"][-1]["content"]
 
     def test_tone_and_app_in_prompt(self, fake_server):
         client = client_for(fake_server)
@@ -122,7 +122,48 @@ class TestRewrite:
         sent = fake_server.requests[0]
         assert "casual" in sent["messages"][0]["content"]
         assert "Messages" in sent["messages"][0]["content"]
-        assert sent["messages"][1]["content"] == "hey there"  # dictation only
+        assert sent["messages"][-1]["content"] == "hey there"  # dictation only
+
+    def test_few_shot_examples_precede_dictation(self, fake_server):
+        # Small models follow demonstrations better than rule text; the
+        # examples ride along as user/assistant turns before the dictation.
+        client = client_for(fake_server)
+        client.rewrite("hey there")
+        messages = fake_server.requests[0]["messages"]
+        assert messages[0]["role"] == "system"
+        assert [m["role"] for m in messages[1:-1]] == \
+            ["user", "assistant"] * ((len(messages) - 2) // 2)
+        assert messages[-1] == {"role": "user", "content": "hey there"}
+
+    def test_cleanup_level_changes_prompt(self, fake_server):
+        light = client_for(fake_server, cleanup_level="light")
+        light.rewrite("hello world how are you")
+        assert "Change nothing else" in fake_server.requests[0]["messages"][0]["content"]
+        high = client_for(fake_server, cleanup_level="high")
+        high.rewrite("hello world how are you")
+        system = fake_server.requests[1]["messages"][0]["content"]
+        assert "false starts" in system and "mishearing" in system
+
+    def test_rejects_answering_instead_of_cleaning(self, fake_server):
+        # The regression that motivated the retention guard: dictation that
+        # *sounds like* instructions came back obeyed ("Disable fastboot."),
+        # dropping most of what was actually said.
+        fake_server.reply = "Disable fastboot.\nWhat is next?"
+        client = client_for(fake_server)
+        out = client.rewrite(
+            "No, don't give me random stuff. Give me exact thing to look "
+            "for. So I disabled fastboot. What is next?")
+        assert out is None  # falls back to the rule-formatted text
+
+    def test_accepts_faithful_cleanup_of_long_text(self, fake_server):
+        fake_server.reply = (
+            "No, don't give me random stuff. Give me the exact thing to "
+            "look for. So I disabled fastboot. What is next?")
+        client = client_for(fake_server)
+        out = client.rewrite(
+            "no don't give me random stuff give me exact thing to look for "
+            "so I disabled fastboot what is next")
+        assert out == fake_server.reply
 
     def test_dictionary_terms_in_prompt(self, fake_server):
         client = client_for(fake_server)
