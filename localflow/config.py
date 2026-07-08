@@ -108,8 +108,10 @@ class LLMConfig:
 
     enabled: bool = True
     # Where the model runs:
-    #   auto     - a running server (LM Studio/Ollama) if found, otherwise
-    #              in-process via MLX (no external app needed)
+    #   auto     - in-process via MLX when local weights exist (never touches
+    #              a running LM Studio), otherwise a server if one is up.
+    #              Setting an explicit base_url flips the preference: your
+    #              server first, embedded as the fallback.
     #   server   - only talk to an OpenAI-compatible server
     #   embedded - only run in-process (Apple Silicon, needs mlx-lm)
     backend: str = "auto"
@@ -236,6 +238,9 @@ class Config:
     data_dir: Optional[str] = None
     # Shown in the dashboard greeting ("Good morning, ...")
     user_name: str = ""
+    # Where this config was loaded from (not serialized): save() writes back
+    # here, so a daemon started with --config never clobbers the default file.
+    source_path: Optional[Path] = field(default=None, repr=False, compare=False)
 
     # ------------------------------------------------------------------ io
 
@@ -243,7 +248,9 @@ class Config:
         return Path(self.data_dir) if self.data_dir else default_data_dir()
 
     def to_dict(self) -> Dict[str, Any]:
-        return dataclasses.asdict(self)
+        data = dataclasses.asdict(self)
+        data.pop("source_path", None)  # runtime bookkeeping, not a setting
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Config":
@@ -278,17 +285,20 @@ class Config:
         return cfg
 
     def save(self, path: Optional[Path] = None) -> Path:
-        path = path or default_config_dir() / "config.json"
+        path = path or self.source_path or default_config_dir() / "config.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(self.to_dict(), indent=2, ensure_ascii=False))
+        self.source_path = path
         return path
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "Config":
         path = path or default_config_dir() / "config.json"
+        cfg = cls()
         if path.exists():
             try:
-                return cls.from_dict(json.loads(path.read_text()))
+                cfg = cls.from_dict(json.loads(path.read_text()))
             except (json.JSONDecodeError, OSError):
                 pass
-        return cls()
+        cfg.source_path = path
+        return cfg

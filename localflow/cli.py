@@ -545,10 +545,12 @@ def cmd_run(args) -> int:
     if config.llm.enabled:
         # LM Studio JIT-unloads idle models; the next dictation would then
         # pay the full reload. A tiny request every 10 minutes keeps the
-        # model resident for the whole session.
+        # model resident for the whole session. The embedded engine lives in
+        # this process and never unloads, so pinging it would just burn CPU.
         def llm_keepalive() -> None:
             while not stop_event.wait(600):
-                controller.llm.warm_up()
+                if controller.llm.mode == "server":
+                    controller.llm.warm_up()
 
         threading.Thread(target=llm_keepalive, daemon=True).start()
 
