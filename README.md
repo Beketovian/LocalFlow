@@ -99,7 +99,8 @@ The app loads code straight from this repo (default builds), so the loop is:
 ```bash
 # edit code, then:
 venv/bin/python -m pytest tests/ -q     # 200+ tests, fully hermetic
-pkill -f localflow.cli && open /Applications/LocalFlow.app   # restart to apply
+pkill -x LocalFlow; open /Applications/LocalFlow.app   # restart to apply
+# (the daemon process IS "LocalFlow" - "pkill -f localflow.cli" no longer matches)
 tail -f ~/Library/Logs/LocalFlow.log    # watch it live
 ```
 
