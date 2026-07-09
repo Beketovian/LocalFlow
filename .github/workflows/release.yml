@@ -9,6 +9,11 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# The default GITHUB_TOKEN is read-only; creating/uploading the release
+# needs write access to repo contents.
+permissions:
+  contents: write
+
 jobs:
   build-macos:
     runs-on: macos-14 # Apple Silicon
