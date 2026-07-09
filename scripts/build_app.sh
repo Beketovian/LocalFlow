@@ -99,7 +99,12 @@ if [ "$STANDALONE" = 1 ]; then
     PBS_URL="${LOCALFLOW_PYTHON_URL:-}"
     if [ -z "$PBS_URL" ]; then
         echo "  resolving python-build-standalone (cpython 3.13, $PBS_ARCH)..."
-        PBS_URL="$(curl -fsSL https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest \
+        # Authenticate when a token is around (CI runners share IPs and hit
+        # GitHub's anonymous rate limit; a 403 here broke the release build).
+        AUTH=()
+        TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+        [ -n "$TOKEN" ] && AUTH=(-H "Authorization: Bearer $TOKEN")
+        PBS_URL="$(curl -fsSL ${AUTH[@]+"${AUTH[@]}"} https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest \
             | "$PY" -c '
 import json, sys
 release = json.load(sys.stdin)
