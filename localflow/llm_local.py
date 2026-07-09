@@ -86,6 +86,11 @@ class EmbeddedEngine:
         self._model = None
         self._tokenizer = None
         self._lock = threading.Lock()  # MLX generation is not concurrent-safe
+        # KV cache reused across calls. The chat prompt starts with a large
+        # constant prefix (system rules + few-shot examples); re-prefilling
+        # it every dictation costs ~1s, reusing it makes cleanup ~0.4s.
+        self._cache = None
+        self._cached_tokens: list = []
 
     @property
     def name(self) -> str:
@@ -104,23 +109,47 @@ class EmbeddedEngine:
         the token cap (truncated text must never be pasted)."""
         self.ensure_loaded()
         from mlx_lm import stream_generate
+        from mlx_lm.models.cache import (
+            can_trim_prompt_cache,
+            make_prompt_cache,
+            trim_prompt_cache,
+        )
         from mlx_lm.sample_utils import make_sampler
 
         with self._lock:
-            prompt = self._tokenizer.apply_chat_template(
+            tokens = self._tokenizer.apply_chat_template(
                 messages, add_generation_prompt=True
             )
+            # Reuse the KV cache for whatever prefix matches the last call
+            # (usually everything up to the new dictation), trimming off the
+            # part that diverged - including the previous generation.
+            if self._cache is None or not can_trim_prompt_cache(self._cache):
+                self._cache = make_prompt_cache(self._model)
+                self._cached_tokens = []
+            common = 0
+            for cached, new in zip(self._cached_tokens, tokens):
+                if cached != new:
+                    break
+                common += 1
+            common = min(common, len(tokens) - 1)  # always feed >= 1 token
+            if len(self._cached_tokens) > common:
+                trim_prompt_cache(self._cache, len(self._cached_tokens) - common)
+                self._cached_tokens = self._cached_tokens[:common]
             text = []
+            generated = []
             last = None
             for resp in stream_generate(
                 self._model,
                 self._tokenizer,
-                prompt=prompt,
+                prompt=tokens[common:],
                 max_tokens=max_tokens,
                 sampler=make_sampler(temp=self.temperature),
+                prompt_cache=self._cache,
             ):
                 text.append(resp.text)
+                generated.append(resp.token)
                 last = resp
+            self._cached_tokens = list(tokens) + generated
         if last is not None and last.finish_reason == "length":
             raise ValueError("llm response truncated")
         return "".join(text)

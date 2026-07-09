@@ -4,7 +4,7 @@ Hold a hotkey, speak, release: your words appear - formatted - in whatever
 app has focus. Powered by OpenAI Whisper running entirely on your machine.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 from .app import DictationEvent, FlowController
 from .config import Config

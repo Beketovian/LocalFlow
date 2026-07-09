@@ -134,6 +134,11 @@ class LLMConfig:
     max_chars: int = 6000
     # Rewrite dictations (grammar, fillers, self-corrections)
     format_dictation: bool = True
+    # How far the cleanup may go (Wispr Flow's Auto Cleanup levels):
+    #   light  - punctuation, capitalization, fillers, self-corrections only
+    #   medium - + obvious grammar slips and unmistakable mishearings
+    #   high   - + smooth false starts so sentences read polished
+    cleanup_level: str = "medium"
     # Use the LLM for free-form command-mode instructions
     command_mode: bool = True
 

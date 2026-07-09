@@ -302,6 +302,8 @@ button.rawbtn { font-size: 11px; padding: 1px 4px; }
         <label class="switch"><input type="checkbox" id="llmEnabled"><span class="slider"></span></label></div>
       <div class="set-row" id="llmDlRow" hidden><div class="l"><b>Built-in model</b><small id="llmDlMsg">Qwen3-4B (~2.3 GB, one-time download) — runs inside LocalFlow, no other apps needed</small></div>
         <button id="llmDlBtn" onclick="downloadLLM()">Download</button></div>
+      <div class="set-row"><div class="l"><b>Cleanup level</b><small>Light: punctuation &amp; fillers only · Medium: + grammar &amp; obvious mishearings · High: + smooth false starts</small></div>
+        <select id="llmLevel"><option value="light">Light</option><option value="medium">Medium</option><option value="high">High</option></select></div>
       <div class="set-row"><div class="l"><b>Model</b><small>"auto" prefers the built-in dictation model</small></div>
         <select id="llmModel" style="max-width:280px"><option value="auto">Auto</option></select></div>
       <div class="set-row"><div class="l"><b>Server</b><small>Optional: a base URL like http://127.0.0.1:1234/v1 makes that server (LM Studio / Ollama) take over</small></div>
@@ -471,6 +473,7 @@ function buildSettings() {
   $('suggestDict').onchange = () => save({ suggest_dictionary: $('suggestDict').checked });
   $('llmEnabled').checked = !!CONFIG.llm?.enabled;
   $('llmCmd').checked = !!CONFIG.llm?.command_mode;
+  $('llmLevel').value = CONFIG.llm?.cleanup_level || 'medium';
   $('llmUrl').value = CONFIG.llm?.base_url || 'auto';
   loadLLMStatus(); loadMics();
   $('userName').onchange = () => save({ user_name: $('userName').value }).then(applyGreeting);
@@ -504,6 +507,7 @@ function buildSettings() {
   });
   $('llmEnabled').onchange = () => save({ llm: { enabled: $('llmEnabled').checked } });
   $('llmCmd').onchange = () => save({ llm: { command_mode: $('llmCmd').checked } });
+  $('llmLevel').onchange = () => save({ llm: { cleanup_level: $('llmLevel').value } });
   $('llmModel').onchange = () => save({ llm: { model: $('llmModel').value } }).then(loadLLMStatus);
   $('llmUrl').onchange = () => save({ llm: { base_url: $('llmUrl').value.trim() || 'auto' } }).then(loadLLMStatus);
 }
