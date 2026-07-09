@@ -25,6 +25,8 @@ jobs:
           venv/bin/pip install -e ".[whispercpp,desktop,llm]"
 
       - name: Build standalone app + DMG
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: ./scripts/build_app.sh --standalone --dmg
 
       - name: Upload DMG artifact
