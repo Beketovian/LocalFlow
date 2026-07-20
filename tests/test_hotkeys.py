@@ -215,3 +215,10 @@ class TestSecondaryPtt:
         assert listener.ptt_combos == [{"fn"}]
         listener.handle_press("f13")
         assert events == []
+
+
+class TestParseTolerance:
+    def test_stray_comma_and_space(self):
+        assert _parse_combo("<fn>, ") == {"fn"}
+        assert _parse_combo("<ctrl>+ <space>;") == {"ctrl", "space"}
+        assert _parse_combo("") == set()
