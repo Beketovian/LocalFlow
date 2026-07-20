@@ -27,9 +27,18 @@ from typing import Callable, Optional, Set
 
 
 def _parse_combo(combo: str) -> Set[str]:
-    """'<ctrl>+<space>' -> {'ctrl', 'space'} ; 'a' stays 'a'."""
-    parts = [p.strip() for p in combo.split("+") if p.strip()]
-    return {p.strip("<>").lower() for p in parts}
+    """'<ctrl>+<space>' -> {'ctrl', 'space'} ; 'a' stays 'a'.
+
+    Tolerant of hand-typed junk ("<fn>, " with a stray comma): tokens are
+    stripped of separators and empties are dropped, so a slightly mangled
+    config degrades to the obvious combo instead of a bind that never fires.
+    """
+    tokens = set()
+    for part in combo.split("+"):
+        token = part.strip().strip(",;").strip().strip("<>").lower()
+        if token:
+            tokens.add(token)
+    return tokens
 
 
 def _key_token(key) -> Optional[str]:
