@@ -275,6 +275,9 @@ button.rawbtn { font-size: 11px; padding: 1px 4px; }
       <div class="set-row"><div class="l"><b>Push to talk</b><small>Hold to dictate, release to insert. "&lt;fn&gt;" = the fn/globe key</small></div>
         <div style="display:flex;gap:6px"><input type="text" id="hkPtt" style="width:160px">
           <button data-rec="push_to_talk" data-field="hkPtt">Record</button></div></div>
+      <div class="set-row"><div class="l"><b>Push to talk (secondary)</b><small>Optional second key that also dictates, e.g. &lt;f13&gt;. Empty = off</small></div>
+        <div style="display:flex;gap:6px"><input type="text" id="hkPttAlt" style="width:160px" placeholder="none">
+          <button data-rec="push_to_talk_alt" data-field="hkPttAlt">Record</button></div></div>
       <div class="set-row"><div class="l"><b>Hands-free toggle</b><small>Auto-stops when you pause</small></div>
         <div style="display:flex;gap:6px"><input type="text" id="hkToggle" style="width:160px">
           <button data-rec="toggle_dictation" data-field="hkToggle">Record</button></div></div>
@@ -461,6 +464,7 @@ function buildSettings() {
   $('engLang').value = CONFIG.engine.language;
   $('engModel').value = CONFIG.engine.model;
   $('hkPtt').value = CONFIG.hotkeys.push_to_talk;
+  $('hkPttAlt').value = CONFIG.hotkeys.push_to_talk_alt || '';
   $('hkToggle').value = CONFIG.hotkeys.toggle_dictation;
   $('hkCmd').value = CONFIG.hotkeys.command_mode;
   $('outMethod').value = CONFIG.output.method;
@@ -481,6 +485,7 @@ function buildSettings() {
   $('engModel').onchange = onModelPicked;
   refreshEngine();
   $('hkPtt').onchange = () => save({ hotkeys: { push_to_talk: $('hkPtt').value } }).then(applyHint);
+  $('hkPttAlt').onchange = () => save({ hotkeys: { push_to_talk_alt: $('hkPttAlt').value.trim() } });
   $('hkToggle').onchange = () => save({ hotkeys: { toggle_dictation: $('hkToggle').value } });
   $('hkCmd').onchange = () => save({ hotkeys: { command_mode: $('hkCmd').value } });
   $('outMethod').onchange = () => save({ output: { method: $('outMethod').value } });

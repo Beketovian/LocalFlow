@@ -56,6 +56,9 @@ class HotkeyConfig:
 
     # Hold to talk; release to transcribe and inject
     push_to_talk: str = "<ctrl>+<space>"
+    # Secondary talk key (either works), e.g. "<f13>" for keyboards
+    # without a globe/fn key. Empty = disabled.
+    push_to_talk_alt: str = ""
     # Toggle hands-free dictation (auto-stops on silence when enabled)
     toggle_dictation: str = "<ctrl>+<shift>+<space>"
     # Command mode: speak an instruction to transform selected text

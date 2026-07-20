@@ -137,8 +137,11 @@ class HotkeyListener:
         on_ptt_release: Callable[[], None],
         on_toggle: Callable[[], None],
         on_command: Callable[[], None],
+        push_to_talk_alt: str = "",
     ) -> None:
         self.ptt = _parse_combo(push_to_talk)
+        # Primary + optional secondary talk key: either combo records.
+        self.ptt_combos = [c for c in (self.ptt, _parse_combo(push_to_talk_alt)) if c]
         self.toggle = _parse_combo(toggle_dictation)
         self.command = _parse_combo(command_mode)
         self.on_ptt_press = on_ptt_press
@@ -147,6 +150,7 @@ class HotkeyListener:
         self.on_command = on_command
         self._down: Set[str] = set()
         self._ptt_active = False
+        self._active_combo: Set[str] = set()
         self._listener = None
         self._fn_tap: Optional[_DarwinFnTap] = None
         self._lock = threading.Lock()
@@ -168,23 +172,27 @@ class HotkeyListener:
         with self._lock:
             self._down.add(token)
             down = set(self._down)
-        if self.toggle and self.toggle <= down and self.toggle != self.ptt:
+        if self.toggle and self.toggle <= down and self.toggle not in self.ptt_combos:
             self._down -= self.toggle - {t for t in self.toggle if t in self.ptt}
             self._safe(self.on_toggle)
             return
-        if self.command and self.command <= down and self.command != self.ptt:
+        if self.command and self.command <= down and self.command not in self.ptt_combos:
             self._safe(self.on_command)
             return
-        if self.ptt and self.ptt <= down and not self._ptt_active:
-            self._ptt_active = True
-            self._safe(self.on_ptt_press)
+        if not self._ptt_active:
+            for combo in self.ptt_combos:
+                if combo <= down:
+                    self._ptt_active = True
+                    self._active_combo = combo
+                    self._safe(self.on_ptt_press)
+                    break
 
     def handle_release(self, token: Optional[str]) -> None:
         if not token:
             return
         with self._lock:
             self._down.discard(token)
-        if self._ptt_active and token in self.ptt:
+        if self._ptt_active and token in self._active_combo:
             self._ptt_active = False
             self._safe(self.on_ptt_release)
 
@@ -203,7 +211,9 @@ class HotkeyListener:
         self._listener.start()
 
         # fn/globe support: only where a combo actually uses it (macOS).
-        if sys.platform == "darwin" and "fn" in (self.ptt | self.toggle | self.command):
+        all_tokens = set().union(*self.ptt_combos, self.toggle, self.command) \
+            if self.ptt_combos else (self.toggle | self.command)
+        if sys.platform == "darwin" and "fn" in all_tokens:
             try:
                 self._fn_tap = _DarwinFnTap(
                     lambda down: self.handle_press("fn") if down
