@@ -450,6 +450,7 @@ def cmd_run(args) -> int:
     def make_listener() -> HotkeyListener:
         return HotkeyListener(
             push_to_talk=config.hotkeys.push_to_talk,
+            push_to_talk_alt=config.hotkeys.push_to_talk_alt,
             toggle_dictation=config.hotkeys.toggle_dictation,
             command_mode=config.hotkeys.command_mode,
             on_ptt_press=lambda: actions.put(ptt_press),

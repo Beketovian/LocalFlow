@@ -161,3 +161,57 @@ class TestFormatCombo:
         from localflow.hotkeys import format_combo
 
         assert format_combo({"d", "ctrl", "fn"}) == "<fn>+<ctrl>+d"
+
+
+class TestSecondaryPtt:
+    def make(self, events, alt="<f13>"):
+        return HotkeyListener(
+            push_to_talk="<fn>",
+            push_to_talk_alt=alt,
+            toggle_dictation="<ctrl>+<shift>+<space>",
+            command_mode="<ctrl>+<alt>+<space>",
+            on_ptt_press=lambda: events.append("press"),
+            on_ptt_release=lambda: events.append("release"),
+            on_toggle=lambda: events.append("toggle"),
+            on_command=lambda: events.append("command"),
+        )
+
+    def test_primary_still_works(self):
+        events = []
+        listener = self.make(events)
+        listener.handle_press("fn")
+        listener.handle_release("fn")
+        assert events == ["press", "release"]
+
+    def test_secondary_also_works(self):
+        events = []
+        listener = self.make(events)
+        listener.handle_press("f13")
+        assert events == ["press"]
+        listener.handle_release("f13")
+        assert events == ["press", "release"]
+
+    def test_release_matches_the_combo_that_started(self):
+        # Holding f13, a stray fn release must not end the recording.
+        events = []
+        listener = self.make(events)
+        listener.handle_press("f13")
+        listener.handle_press("fn")
+        listener.handle_release("fn")   # not the active combo
+        assert events == ["press"]
+        listener.handle_release("f13")
+        assert events == ["press", "release"]
+
+    def test_no_double_press_when_both_held(self):
+        events = []
+        listener = self.make(events)
+        listener.handle_press("fn")
+        listener.handle_press("f13")
+        assert events == ["press"]  # second combo doesn't re-trigger
+
+    def test_empty_alt_is_single_bind(self):
+        events = []
+        listener = self.make(events, alt="")
+        assert listener.ptt_combos == [{"fn"}]
+        listener.handle_press("f13")
+        assert events == []
