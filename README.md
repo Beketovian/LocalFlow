@@ -22,6 +22,7 @@ While you dictate, the floating pill shows a live waveform, then pulses while Wh
 | Personal dictionary | ✅ names/jargon are fed to Whisper as a bias prompt **and** fuzzy-corrected after transcription; plus text replacements ("omw" → "on my way") |
 | Context awareness / app-aware tone | ✅ per-app profiles (terminal, code editor, chat, email, docs) adjust capitalization & punctuation automatically |
 | Command mode (edit selected text by voice) | ✅ local commands (uppercase, bullet list, snake case, fix punctuation, shorten, …) + free-form edits ("translate to french", "make it friendlier") via the same local LLM |
+| Hallucination & loop prevention | ✅ built-in regex filters strip YouTube sign-offs ("Thanks for watching"), and mathematical segment filters (compression ratio, no_speech_prob) prevent Whisper from degrading or looping on long dictations |
 | Whisper-quiet speech | ✅ automatic RMS gain normalization rescues very quiet audio |
 | 100+ languages | ✅ multilingual Whisper models with auto-detection or a pinned language |
 | Live preview while speaking | ✅ pseudo-streaming partial transcripts via background re-transcription |
