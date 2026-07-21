@@ -76,7 +76,7 @@ class AudioConfig:
     # Play soft feedback tones when recording starts/stops
     feedback_sounds: bool = True
     # Hands-free mode: stop after this many seconds of trailing silence
-    silence_stop_after: float = 1.6
+    silence_stop_after: float = 2.5
     # Energy threshold used by the simple VAD (fraction of full scale RMS)
     vad_threshold: float = 0.012
     max_recording_seconds: float = 600.0

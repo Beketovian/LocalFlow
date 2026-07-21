@@ -71,6 +71,7 @@ class WhisperCppEngine(STTEngine):
         if initial_prompt:
             kwargs["initial_prompt"] = initial_prompt
 
+
         audio = np.ascontiguousarray(audio, dtype=np.float32)
         with _quiet_stderr():
             raw_segments = self._model.transcribe(audio, **kwargs)

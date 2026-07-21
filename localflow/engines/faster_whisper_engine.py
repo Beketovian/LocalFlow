@@ -45,8 +45,16 @@ class FasterWhisperEngine(STTEngine):
             initial_prompt=initial_prompt,
             beam_size=max(1, self.beam_size),
             vad_filter=True,
+            condition_on_previous_text=True,
         )
-        segments = [Segment(start=s.start, end=s.end, text=s.text) for s in raw_segments]
+        
+        segments = []
+        for s in raw_segments:
+            if getattr(s, "no_speech_prob", 0.0) > 0.5:
+                continue
+            if getattr(s, "compression_ratio", 0.0) > 2.4:
+                continue
+            segments.append(Segment(start=s.start, end=s.end, text=s.text))
         text = " ".join(s.text.strip() for s in segments).strip()
         return TranscriptionResult(
             text=text,

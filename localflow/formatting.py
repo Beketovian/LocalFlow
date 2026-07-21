@@ -42,6 +42,32 @@ def remove_fillers(text: str) -> str:
     return text
 
 
+# ---------------------------------------------------------------- hallucinations
+
+_HALLUCINATIONS = [
+    r"thanks for watching",
+    r"thank you for watching",
+    r"i hope you enjoyed this video",
+    r"i'll see you in the next one",
+    r"subscribe to my channel",
+]
+_HALLUCINATION_RE = re.compile(
+    r"\b(?:" + "|".join(_HALLUCINATIONS) + r")\b[,.!?]*\s*",
+    re.IGNORECASE
+)
+
+
+def remove_hallucinations(text: str) -> str:
+    text = _HALLUCINATION_RE.sub("", text)
+    # Tidy orphaned punctuation
+    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+    text = re.sub(r"([,;:])\s*(?:[,;:]\s*)+", r"\1 ", text)
+    text = re.sub(r"(?:^|(?<=[.!?…]))\s*[,;:]\s*", " ", text)
+    text = re.sub(r"\bbye\b\.?\s*$", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"[ \t]{2,}", " ", text).strip()
+    return text
+
+
 # ----------------------------------------------------------------- self-correction
 
 # "…, no wait, X" / "… scratch that, X" / "… I mean X"
@@ -330,6 +356,7 @@ def format_transcript(
         text = apply_self_corrections(text)
     if cfg.remove_fillers:
         text = remove_fillers(text)
+    text = remove_hallucinations(text)
     if cfg.spoken_commands:
         text = apply_spoken_commands(text)
     if cfg.spoken_punctuation:
